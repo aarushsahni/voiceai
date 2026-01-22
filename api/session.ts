@@ -39,12 +39,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         input_audio_transcription: {
           model: 'whisper-1',
         },
+        // VAD settings from voice5.py - tuned for lower sensitivity
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 500,
-          create_response: true,
+          threshold: 0.6,              // Higher = less sensitive (voice5.py: 0.6)
+          prefix_padding_ms: 200,      // voice5.py: 200
+          silence_duration_ms: 400,    // voice5.py: 400
+          create_response: false,      // We manually trigger responses with delay
         },
       }),
     });

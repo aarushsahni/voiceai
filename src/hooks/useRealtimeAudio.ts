@@ -38,6 +38,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Transcript accumulation
   const currentAssistantTextRef = useRef<string>('');
   const pendingUserTranscriptRef = useRef<string | null>(null);
+  
+  // NO_BARGE_IN: Track assistant speaking state for mic muting
+  const assistantSpeakingRef = useRef<boolean>(false);
+  const responseDelayTimerRef = useRef<number | null>(null);
+  
+  // Response delay from voice5.py (RESPONSE_DELAY_SEC = 0.4)
+  const RESPONSE_DELAY_MS = 400;
 
   const isSupported = typeof navigator !== 'undefined' && 
     'mediaDevices' in navigator && 
@@ -150,9 +157,18 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       mediaStreamRef.current = stream;
 
       // Add mic track to peer connection
+      // We'll mute/unmute this track based on assistant speaking (NO_BARGE_IN)
+      const audioTrack = stream.getAudioTracks()[0];
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream);
       });
+      
+      // Function to mute mic while assistant is speaking (NO_BARGE_IN from voice5.py)
+      const updateMicMute = () => {
+        if (audioTrack) {
+          audioTrack.enabled = !assistantSpeakingRef.current;
+        }
+      };
 
       // 5. Create data channel for events
       const dc = pc.createDataChannel('oai-events');
@@ -170,7 +186,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       dc.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          handleServerEvent(data);
+          handleServerEvent(data, updateMicMute, dc);
         } catch (e) {
           console.error('Failed to parse server event:', e);
         }
@@ -224,7 +240,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   }, [isSupported, updateStatus, addTranscript, onError, endCall, status]);
 
   // Handle server events from data channel
-  const handleServerEvent = useCallback((data: Record<string, unknown>) => {
+  const handleServerEvent = useCallback((
+    data: Record<string, unknown>,
+    updateMicMute?: () => void,
+    dataChannel?: RTCDataChannel
+  ) => {
     const eventType = data.type as string;
 
     switch (eventType) {
@@ -234,22 +254,47 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         break;
 
       case 'input_audio_buffer.speech_started':
+        // Cancel any pending response timer (user started speaking again)
+        if (responseDelayTimerRef.current) {
+          clearTimeout(responseDelayTimerRef.current);
+          responseDelayTimerRef.current = null;
+        }
         updateStatus('user_speaking');
         break;
 
       case 'input_audio_buffer.speech_stopped':
         speechStoppedTimeRef.current = Date.now();
         updateStatus('processing');
+        
+        // Schedule response creation with delay (like voice5.py _schedule_delayed_response)
+        if (responseDelayTimerRef.current) {
+          clearTimeout(responseDelayTimerRef.current);
+        }
+        responseDelayTimerRef.current = window.setTimeout(() => {
+          if (dataChannel && dataChannel.readyState === 'open') {
+            dataChannel.send(JSON.stringify({ type: 'response.create' }));
+          }
+          responseDelayTimerRef.current = null;
+        }, RESPONSE_DELAY_MS);
         break;
 
       case 'response.created':
         currentAssistantTextRef.current = '';
+        // Cancel response timer since response is now in progress
+        if (responseDelayTimerRef.current) {
+          clearTimeout(responseDelayTimerRef.current);
+          responseDelayTimerRef.current = null;
+        }
         break;
 
       case 'response.audio_transcript.delta': {
         // Assistant is speaking - first audio chunk
         if (status !== 'assistant_speaking') {
           updateStatus('assistant_speaking');
+          
+          // NO_BARGE_IN: Mute mic while assistant speaks
+          assistantSpeakingRef.current = true;
+          updateMicMute?.();
           
           // Calculate latency
           if (speechStoppedTimeRef.current) {
@@ -299,6 +344,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         if (status === 'assistant_speaking') {
           updateStatus('connected');
         }
+        
+        // NO_BARGE_IN: Unmute mic after assistant finishes
+        // Add small delay to ensure audio playback is complete
+        setTimeout(() => {
+          assistantSpeakingRef.current = false;
+          updateMicMute?.();
+        }, 500);
         break;
 
       case 'conversation.item.input_audio_transcription.completed': {

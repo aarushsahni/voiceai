@@ -1,7 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Stethoscope, AlertCircle } from 'lucide-react';
 import { useRealtimeAudio } from './hooks/useRealtimeAudio';
-import { TranscriptEntry, CallStatus } from './types';
+import { TranscriptEntry, CallStatus, FlowMap as FlowMapType } from './types';
 import { CallControls } from './components/CallControls';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Transcript } from './components/Transcript';
@@ -21,6 +21,9 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [callSummary, setCallSummary] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  
+  // Custom flow map for generated scripts
+  const [customFlowMap, setCustomFlowMap] = useState<FlowMapType | null>(null);
 
   // Script configuration state
   const [scriptSettings, setScriptSettings] = useState<ScriptSettings>({
@@ -32,13 +35,22 @@ function App() {
     voice: 'cedar', // Default voice from voice5.py
   });
 
+  // Active flow map - use custom if available and selected, otherwise default
+  const activeFlowMap = useMemo(() => {
+    if (scriptSettings.scriptChoice === 'custom' && customFlowMap) {
+      return customFlowMap;
+    }
+    return defaultFlowMap;
+  }, [scriptSettings.scriptChoice, customFlowMap]);
+
   // LLM-based answer matching (same as voice5.py match_answer_with_llm)
   const matchAnswerWithLLM = useCallback(async (
     question: string,
     userResponse: string,
-    stepId: string
+    stepId: string,
+    flowMap: FlowMapType
   ) => {
-    const step = defaultFlowMap.steps.find(s => s.id === stepId);
+    const step = flowMap.steps.find(s => s.id === stepId);
     if (!step || !step.options.length) return;
 
     try {
@@ -103,7 +115,7 @@ function App() {
         // Infer which step we're on based on assistant speech
         const newStep = inferFlowStep(
           updated.map((t) => ({ role: t.role, text: t.text })),
-          defaultFlowMap
+          activeFlowMap
         );
         if (newStep && newStep !== currentStepId) {
           // Mark previous step as completed
@@ -114,21 +126,21 @@ function App() {
         }
       } else if (entry.role === 'user' && currentStepId) {
         // Try local match first
-        const localMatch = matchUserResponse(entry.text, currentStepId, defaultFlowMap);
+        const localMatch = matchUserResponse(entry.text, currentStepId, activeFlowMap);
         if (localMatch) {
           setMatchedOptions((prev) => new Map([...prev, [currentStepId, localMatch]]));
         } else {
           // Fall back to LLM matching (async, won't block)
-          const step = defaultFlowMap.steps.find(s => s.id === currentStepId);
+          const step = activeFlowMap.steps.find(s => s.id === currentStepId);
           if (step) {
-            matchAnswerWithLLM(step.question, entry.text, currentStepId);
+            matchAnswerWithLLM(step.question, entry.text, currentStepId, activeFlowMap);
           }
         }
       }
 
       return updated;
     });
-  }, [currentStepId, matchAnswerWithLLM]);
+  }, [currentStepId, activeFlowMap, matchAnswerWithLLM]);
 
   // Handle status changes
   const handleStatusChange = useCallback((status: CallStatus) => {
@@ -152,7 +164,7 @@ function App() {
     onError: handleError,
   });
 
-  // Generate/convert custom script
+  // Generate/convert custom script - now also returns flow map
   const handleGenerateScript = useCallback(async (
     script: string,
     inputType: InputType,
@@ -174,6 +186,17 @@ function App() {
       }
 
       const data = await response.json();
+      
+      // Store the flow map if returned
+      if (data.flowMap) {
+        setCustomFlowMap(data.flowMap);
+        console.log('[flow] Custom flow map loaded:', data.flowMap.title, 
+          `with ${data.flowMap.steps?.length || 0} steps`);
+      } else {
+        // Clear custom flow map if none returned
+        setCustomFlowMap(null);
+      }
+      
       return data.systemPrompt;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to generate script';
@@ -302,9 +325,9 @@ function App() {
 
         {/* Main content grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Flow Map */}
+          {/* Flow Map - uses active flow map (custom or default) */}
           <FlowMap
-            flowMap={defaultFlowMap}
+            flowMap={activeFlowMap}
             currentStepId={currentStepId}
             completedSteps={completedSteps}
             matchedOptions={matchedOptions}

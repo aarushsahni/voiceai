@@ -3,6 +3,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 /**
  * Generates or converts a custom script to a system prompt format.
  * Uses GPT-4 to convert SMS/IVR scripts or generate from open-ended prompts.
+ * Returns both system prompt AND flow map (like voice5.py).
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -37,7 +38,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           { role: 'user', content: userMessage },
         ],
         temperature: 0.3,
-        max_tokens: 4000,
+        max_tokens: 6000,
+        response_format: { type: 'json_object' },
       }),
     });
 
@@ -50,14 +52,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = await response.json();
-    const generatedPrompt = data.choices?.[0]?.message?.content;
+    const content = data.choices?.[0]?.message?.content;
 
-    if (!generatedPrompt) {
+    if (!content) {
       return res.status(500).json({ error: 'No response generated' });
     }
 
+    // Parse JSON response
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      // If not valid JSON, try to extract from markdown code block
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[1].trim());
+      } else {
+        return res.status(500).json({ error: 'Failed to parse response as JSON' });
+      }
+    }
+
     return res.status(200).json({
-      systemPrompt: generatedPrompt.trim(),
+      systemPrompt: parsed.system_prompt || '',
+      finalPhrases: parsed.final_phrases || ['goodbye', 'bye', 'take care'],
+      flowMap: parsed.flow || null,
     });
   } catch (error) {
     console.error('Generation error:', error);
@@ -68,12 +86,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function buildConversionInstructions(): string {
-  return `You convert medical IVR content into a system prompt for a realtime voice agent.
+  return `You convert medical IVR content into a system prompt AND conversation flow map for a realtime voice agent.
+
+Return ONLY valid JSON with this exact schema:
+{
+  "system_prompt": "string - the full instructions for the voice agent",
+  "final_phrases": ["goodbye", "bye", "take care", ...],
+  "flow": {
+    "title": "string - title of this script",
+    "steps": [
+      {
+        "id": "string - unique step identifier like 'language', 'confirm', 'status'",
+        "label": "string - display label like 'Language Selection'",
+        "question": "string - the question being asked at this step",
+        "info": "string - brief description of what this step collects",
+        "options": [
+          {
+            "label": "string - display label like 'English' or 'Yes'",
+            "next": "string - next step id or 'END (reason)'"
+          }
+        ]
+      }
+    ]
+  }
+}
 
 AGENT PERSONALITY:
 Warm, helpful, conversational; never claim to be human.
 
-CRITICAL RULES:
+CRITICAL RULES FOR system_prompt:
 1. START with "Hi [patient_name], this is Penn Medicine calling..." - use EXACTLY '[patient_name]' as placeholder
 2. Combine related questions into natural turns where possible
 3. Use empathetic, human-like language ("I understand", "Thank you for sharing that")
@@ -84,10 +125,14 @@ CRITICAL RULES:
 8. If patient expresses concerning symptoms, say "I'll make sure the care team knows, and someone will call you back soon."
 9. BEFORE goodbye, ask "Is there anything else I can help you with?"
 10. Include bilingual support (English/Spanish) if the original script has it
+11. Handle "repeat" requests by repeating the current question
 
-OUTPUT FORMAT:
-Return ONLY the system prompt text that will be passed to the voice agent. No JSON, no markdown formatting.
-The prompt should define the conversation flow step by step.`;
+CRITICAL RULES FOR flow:
+1. Each step must have a unique "id" (use lowercase, short identifiers)
+2. Options should cover expected user responses
+3. "next" should reference another step's id, or "END (reason)" for terminal states
+4. Include all branching paths (e.g., both Yes and No responses)
+5. Flow should match the conversation structure in system_prompt`;
 }
 
 function buildUserMessage(script: string, inputType: string, mode: string): string {
@@ -98,20 +143,22 @@ function buildUserMessage(script: string, inputType: string, mode: string): stri
   if (inputType === 'prompt') {
     return `Mode: ${modeDesc}
     
-Task: Generate a complete IVR voice agent system prompt from this description.
+Task: Generate a complete IVR voice agent system prompt AND flow map from this description.
 
 User's description:
 ${script}
 
-Generate a full conversation flow with greeting, questions, acknowledgments, and closing.`;
+Generate a full conversation flow with greeting, questions, acknowledgments, and closing.
+Return the response as valid JSON with system_prompt, final_phrases, and flow fields.`;
   }
 
   return `Mode: ${modeDesc}
 
-Task: Convert this SMS/IVR script into a voice agent system prompt.
+Task: Convert this SMS/IVR script into a voice agent system prompt AND flow map.
 
 Original script:
 ${script}
 
-Convert to a natural voice conversation format while preserving the clinical intent.`;
+Convert to a natural voice conversation format while preserving the clinical intent.
+Return the response as valid JSON with system_prompt, final_phrases, and flow fields.`;
 }
