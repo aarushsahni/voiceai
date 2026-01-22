@@ -17,8 +17,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const { systemPrompt, voice = 'alloy', patientName } = req.body || {};
 
-    // Build the instructions with patient name if provided
-    let instructions = systemPrompt || getDefaultSystemPrompt(patientName);
+    // Use provided system prompt or fall back to default
+    let instructions = systemPrompt;
+    
+    // If no custom prompt provided, use the default
+    if (!instructions || instructions.trim().length === 0) {
+      instructions = getDefaultSystemPrompt(patientName);
+    }
 
     // Create ephemeral token via OpenAI API
     const response = await fetch('https://api.openai.com/v1/realtime/sessions', {

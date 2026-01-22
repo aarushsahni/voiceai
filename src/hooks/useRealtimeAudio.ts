@@ -111,7 +111,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       const sessionResponse = await fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patientName, systemPrompt, voice }),
+        body: JSON.stringify({ 
+          patientName, 
+          systemPrompt: systemPrompt || '', 
+          voice 
+        }),
       });
 
       if (!sessionResponse.ok) {

@@ -7,7 +7,9 @@ import { StatusIndicator } from './components/StatusIndicator';
 import { Transcript } from './components/Transcript';
 import { FlowMap } from './components/FlowMap';
 import { LatencyTracker } from './components/LatencyTracker';
-import { defaultFlowMap, inferFlowStep, matchUserResponse } from './utils/scripts';
+import { CallSummary } from './components/CallSummary';
+import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
+import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
 
 function App() {
   const [patientName, setPatientName] = useState('');
@@ -16,41 +18,128 @@ function App() {
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const [matchedOptions, setMatchedOptions] = useState<Map<string, string>>(new Map());
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [callSummary, setCallSummary] = useState<string | null>(null);
+  const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+
+  // Script configuration state
+  const [scriptSettings, setScriptSettings] = useState<ScriptSettings>({
+    mode: 'deterministic',
+    scriptChoice: 'ed-followup-v1',
+    customScript: '',
+    inputType: 'script',
+    generatedPrompt: null,
+    voice: 'cedar', // Default voice from voice5.py
+  });
+
+  // LLM-based answer matching (same as voice5.py match_answer_with_llm)
+  const matchAnswerWithLLM = useCallback(async (
+    question: string,
+    userResponse: string,
+    stepId: string
+  ) => {
+    const step = defaultFlowMap.steps.find(s => s.id === stepId);
+    if (!step || !step.options.length) return;
+
+    try {
+      const response = await fetch('/api/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question,
+          userResponse,
+          options: step.options,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.match) {
+          setMatchedOptions(prev => new Map([...prev, [stepId, data.match]]));
+        }
+      }
+    } catch (err) {
+      // Fall back to local matching on error
+      console.error('LLM match error:', err);
+    }
+  }, []);
+
+  // Generate call summary (same as voice5.py generate_call_summary)
+  const generateCallSummary = useCallback(async (timeline: TranscriptEntry[]) => {
+    if (timeline.length === 0) {
+      setCallSummary('No conversation recorded.');
+      return;
+    }
+
+    setIsSummaryLoading(true);
+    try {
+      const response = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeline }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCallSummary(data.summary);
+      } else {
+        setCallSummary('Call completed. Unable to generate summary.');
+      }
+    } catch (err) {
+      console.error('Summary generation error:', err);
+      setCallSummary('Call completed. Unable to generate summary.');
+    } finally {
+      setIsSummaryLoading(false);
+    }
+  }, []);
 
   // Handle new transcript entries
   const handleTranscript = useCallback((entry: TranscriptEntry) => {
-    setTranscripts((prev) => [...prev, entry]);
+    setTranscripts((prev) => {
+      const updated = [...prev, entry];
 
-    // Update flow tracking based on transcripts
-    if (entry.role === 'assistant') {
-      // Infer which step we're on based on assistant speech
-      const newStep = inferFlowStep(
-        [...transcripts, entry].map((t) => ({ role: t.role, text: t.text })),
-        defaultFlowMap
-      );
-      if (newStep && newStep !== currentStepId) {
-        // Mark previous step as completed
-        if (currentStepId) {
-          setCompletedSteps((prev) => new Set([...prev, currentStepId]));
+      // Update flow tracking based on transcripts
+      if (entry.role === 'assistant') {
+        // Infer which step we're on based on assistant speech
+        const newStep = inferFlowStep(
+          updated.map((t) => ({ role: t.role, text: t.text })),
+          defaultFlowMap
+        );
+        if (newStep && newStep !== currentStepId) {
+          // Mark previous step as completed
+          if (currentStepId) {
+            setCompletedSteps((prevCompleted) => new Set([...prevCompleted, currentStepId]));
+          }
+          setCurrentStepId(newStep);
         }
-        setCurrentStepId(newStep);
+      } else if (entry.role === 'user' && currentStepId) {
+        // Try local match first
+        const localMatch = matchUserResponse(entry.text, currentStepId, defaultFlowMap);
+        if (localMatch) {
+          setMatchedOptions((prev) => new Map([...prev, [currentStepId, localMatch]]));
+        } else {
+          // Fall back to LLM matching (async, won't block)
+          const step = defaultFlowMap.steps.find(s => s.id === currentStepId);
+          if (step) {
+            matchAnswerWithLLM(step.question, entry.text, currentStepId);
+          }
+        }
       }
-    } else if (entry.role === 'user' && currentStepId) {
-      // Try to match user response to current step options
-      const matched = matchUserResponse(entry.text, currentStepId, defaultFlowMap);
-      if (matched) {
-        setMatchedOptions((prev) => new Map([...prev, [currentStepId, matched]]));
-      }
-    }
-  }, [transcripts, currentStepId]);
+
+      return updated;
+    });
+  }, [currentStepId, matchAnswerWithLLM]);
 
   // Handle status changes
   const handleStatusChange = useCallback((status: CallStatus) => {
-    if (status === 'ended' || status === 'error') {
-      // Reset flow tracking for next call
-      // But keep transcript for review
+    if (status === 'ended') {
+      // Generate call summary when call ends
+      setTranscripts(current => {
+        generateCallSummary(current);
+        return current;
+      });
     }
-  }, []);
+  }, [generateCallSummary]);
 
   // Handle errors
   const handleError = useCallback((errorMsg: string) => {
@@ -63,20 +152,79 @@ function App() {
     onError: handleError,
   });
 
+  // Generate/convert custom script
+  const handleGenerateScript = useCallback(async (
+    script: string,
+    inputType: InputType,
+    mode: ScriptMode
+  ): Promise<string | null> => {
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script, inputType, mode }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to generate script');
+      }
+
+      const data = await response.json();
+      return data.systemPrompt;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to generate script';
+      setError(message);
+      return null;
+    } finally {
+      setIsGenerating(false);
+    }
+  }, []);
+
+  // Get the system prompt to use for the call
+  const getCallSystemPrompt = useCallback((): string => {
+    // If custom script with generated prompt, use that
+    if (scriptSettings.scriptChoice === 'custom' && scriptSettings.generatedPrompt) {
+      // Replace patient name placeholder
+      let prompt = scriptSettings.generatedPrompt;
+      if (patientName) {
+        prompt = prompt.replace(/\[patient_name\]/g, patientName);
+      }
+      return prompt;
+    }
+
+    // Use built-in scripts
+    return getSystemPrompt(scriptSettings.scriptChoice, scriptSettings.mode, patientName || undefined);
+  }, [scriptSettings, patientName]);
+
   // Start a new call
   const handleStartCall = useCallback(() => {
+    // Validate custom script if selected
+    if (scriptSettings.scriptChoice === 'custom' && !scriptSettings.generatedPrompt) {
+      setError('Please generate a script first by clicking "Generate Script" or "Convert Script"');
+      return;
+    }
+
     setError(null);
     setTranscripts([]);
     setCurrentStepId(null);
     setCompletedSteps(new Set());
     setMatchedOptions(new Map());
-    startCall(patientName || undefined);
-  }, [patientName, startCall]);
+    setCallSummary(null);
+
+    const systemPrompt = getCallSystemPrompt();
+    startCall(patientName || undefined, systemPrompt, scriptSettings.voice);
+  }, [patientName, scriptSettings, getCallSystemPrompt, startCall]);
 
   // End current call
   const handleEndCall = useCallback(() => {
     endCall();
   }, [endCall]);
+
+  const isCallActive = status !== 'idle' && status !== 'ended' && status !== 'error';
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -103,18 +251,29 @@ function App() {
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <div>
+            <div className="flex-1">
               <h3 className="font-semibold text-red-800">Error</h3>
               <p className="text-red-700 text-sm">{error}</p>
             </div>
             <button
               onClick={() => setError(null)}
-              className="ml-auto text-red-600 hover:text-red-800"
+              className="text-red-600 hover:text-red-800 text-xl leading-none"
             >
               ×
             </button>
           </div>
         )}
+
+        {/* Script Configuration */}
+        <div className="mb-6">
+          <ScriptConfig
+            settings={scriptSettings}
+            onSettingsChange={setScriptSettings}
+            disabled={isCallActive}
+            onGenerate={handleGenerateScript}
+            isGenerating={isGenerating}
+          />
+        </div>
 
         {/* Call controls */}
         <div className="mb-6">
@@ -129,10 +288,17 @@ function App() {
         </div>
 
         {/* Status and Latency row */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           <StatusIndicator status={status} />
           <LatencyTracker latency={latency} />
         </div>
+
+        {/* Call Summary (shown when call ends) */}
+        {(callSummary || isSummaryLoading) && (
+          <div className="mb-6">
+            <CallSummary summary={callSummary} isLoading={isSummaryLoading} />
+          </div>
+        )}
 
         {/* Main content grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -152,14 +318,23 @@ function App() {
         <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h3 className="font-semibold text-blue-800 mb-2">How to use</h3>
           <ol className="list-decimal list-inside text-blue-700 text-sm space-y-1">
+            <li>Choose your conversation mode (Deterministic or Explorative)</li>
+            <li>Select a script and voice, or create a custom script</li>
             <li>Enter the patient's name (optional) and click "Start Call"</li>
             <li>Allow microphone access when prompted</li>
-            <li>The AI assistant will begin the IVR script</li>
             <li>Speak your responses naturally - the system understands variations</li>
             <li>The call will end automatically after the closing, or click "End Call"</li>
           </ol>
+          <div className="mt-3 pt-3 border-t border-blue-200">
+            <p className="text-xs text-blue-600">
+              <strong>Deterministic mode:</strong> AI follows the script exactly (temperature 0.6). Best for compliance.
+            </p>
+            <p className="text-xs text-blue-600 mt-1">
+              <strong>Explorative mode:</strong> AI asks open-ended follow-ups (temperature 0.9). Best for gathering feedback.
+            </p>
+          </div>
           <p className="mt-3 text-xs text-blue-600">
-            Note: This requires HTTPS in production. For local development, use <code className="bg-blue-100 px-1 rounded">vercel dev</code> which handles this automatically.
+            Note: This requires HTTPS in production. For local development, use <code className="bg-blue-100 px-1 rounded">vercel dev</code>.
           </p>
         </div>
       </main>
