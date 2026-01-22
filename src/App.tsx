@@ -8,6 +8,7 @@ import { Transcript } from './components/Transcript';
 import { FlowMap } from './components/FlowMap';
 import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
+import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
 
@@ -24,6 +25,10 @@ function App() {
   
   // Custom flow map for generated scripts
   const [customFlowMap, setCustomFlowMap] = useState<FlowMapType | null>(null);
+  
+  // Callback tracking - flags when clinical team needs to follow up
+  const [needsCallback, setNeedsCallback] = useState(false);
+  const [callbackReasons, setCallbackReasons] = useState<string[]>([]);
 
   // Script configuration state
   const [scriptSettings, setScriptSettings] = useState<ScriptSettings>({
@@ -77,7 +82,11 @@ function App() {
   }, []);
 
   // Generate call summary (same as voice5.py generate_call_summary)
-  const generateCallSummary = useCallback(async (timeline: TranscriptEntry[]) => {
+  const generateCallSummary = useCallback(async (
+    timeline: TranscriptEntry[],
+    callbackNeeded: boolean,
+    reasons: string[]
+  ) => {
     if (timeline.length === 0) {
       setCallSummary('No conversation recorded.');
       return;
@@ -88,7 +97,11 @@ function App() {
       const response = await fetch('/api/summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timeline }),
+        body: JSON.stringify({ 
+          timeline,
+          needsCallback: callbackNeeded,
+          callbackReasons: reasons,
+        }),
       });
 
       if (response.ok) {
@@ -112,6 +125,19 @@ function App() {
 
       // Update flow tracking based on transcripts
       if (entry.role === 'assistant') {
+        // Check if assistant confirmed a callback is needed
+        // This is triggered when the model says "we'll have someone call you back"
+        const callbackCheck = checkAssistantForCallback(entry.text);
+        if (callbackCheck.needed && callbackCheck.reason) {
+          setNeedsCallback(true);
+          setCallbackReasons(prev => {
+            if (!prev.includes(callbackCheck.reason!)) {
+              return [...prev, callbackCheck.reason!];
+            }
+            return prev;
+          });
+        }
+        
         // Infer which step we're on based on assistant speech
         const newStep = inferFlowStep(
           updated.map((t) => ({ role: t.role, text: t.text })),
@@ -143,11 +169,18 @@ function App() {
   }, [currentStepId, activeFlowMap, matchAnswerWithLLM]);
 
   // Handle status changes
-  const handleStatusChange = useCallback((status: CallStatus) => {
-    if (status === 'ended') {
-      // Generate call summary when call ends
+  const handleStatusChange = useCallback((newStatus: CallStatus) => {
+    if (newStatus === 'ended') {
+      // Generate call summary when call ends - include callback status
       setTranscripts(current => {
-        generateCallSummary(current);
+        // Access current callback state
+        setNeedsCallback(currentNeedsCallback => {
+          setCallbackReasons(currentReasons => {
+            generateCallSummary(current, currentNeedsCallback, currentReasons);
+            return currentReasons;
+          });
+          return currentNeedsCallback;
+        });
         return current;
       });
     }
@@ -237,6 +270,8 @@ function App() {
     setCompletedSteps(new Set());
     setMatchedOptions(new Map());
     setCallSummary(null);
+    setNeedsCallback(false);
+    setCallbackReasons([]);
 
     const systemPrompt = getCallSystemPrompt();
     startCall(patientName || undefined, systemPrompt, scriptSettings.voice);
@@ -315,6 +350,17 @@ function App() {
           <StatusIndicator status={status} />
           <LatencyTracker latency={latency} />
         </div>
+
+        {/* Callback Alert (prominent when callback needed) */}
+        {(needsCallback || status === 'ended') && (
+          <div className="mb-6">
+            <CallbackAlert 
+              needsCallback={needsCallback} 
+              reasons={callbackReasons}
+              callEnded={status === 'ended'}
+            />
+          </div>
+        )}
 
         {/* Call Summary (shown when call ends) */}
         {(callSummary || isSummaryLoading) && (

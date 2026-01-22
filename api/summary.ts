@@ -15,7 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { timeline } = req.body || {};
+    const { timeline, needsCallback, callbackReasons } = req.body || {};
 
     if (!timeline || !Array.isArray(timeline) || timeline.length === 0) {
       return res.status(200).json({ summary: 'No conversation recorded.' });
@@ -51,6 +51,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return `Call completed with ${numTurns} patient responses. Patient statements: ${preview}${patientSaid.length > 3 ? '...' : ''}`;
     };
 
+    // Build context about callback status
+    const callbackContext = needsCallback 
+      ? `\n\nIMPORTANT: This call has been flagged for clinical callback. Reasons: ${(callbackReasons || []).join(', ')}`
+      : '\n\nNo callback required - patient reported no concerns.';
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -62,21 +67,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messages: [
           {
             role: 'system',
-            content: `You summarize medical IVR call transcripts.
+            content: `You summarize medical IVR call transcripts for clinical review.
 Provide a brief, professional summary covering:
 1. Call outcome (completed, wrong number, etc.)
 2. Key information gathered from patient
 3. Patient's current status/concerns if mentioned
-4. Any follow-up actions mentioned
-Keep it concise (3-5 sentences).`,
+4. CALLBACK STATUS - clearly state if clinical team needs to follow up
+5. Any specific concerns requiring attention
+Keep it concise (3-5 sentences). Start with callback status if one is needed.`,
           },
           {
             role: 'user',
-            content: `Summarize this call:\n\n${transcript}`,
+            content: `Summarize this call:${callbackContext}\n\nTranscript:\n${transcript}`,
           },
         ],
         temperature: 0.3,
-        max_tokens: 200,
+        max_tokens: 250,
       }),
     });
 
