@@ -116,7 +116,7 @@ IMPORTANT RULES:
 3. Use warm, empathetic, human-like language. Add natural phrases like 'I understand', 'Thank you for sharing that', 'That's helpful to know'.
 4. The voice should sound kind and caring, not robotic. Use conversational phrasing.
 5. CRITICAL: The VERY LAST sentence of the script MUST contain the word 'goodbye' - this triggers call end detection. Example: 'Take care, goodbye!' or 'Thank you, goodbye!'
-6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
+6. final_phrases MUST include: ['goodbye', 'take care', 'bye'] 
 7. Each flow step's 'options' should include 'keywords' array with multiple ways a human might express that answer.
    Example: for 'yes', keywords could be ['yes', 'yeah', 'yep', 'correct', 'that is right', 'uh huh', 'mhm']
 8. Preserve clinical meaning. No extra medical advice beyond disclaimer.
