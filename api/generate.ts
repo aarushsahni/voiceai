@@ -87,7 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 function buildConversionInstructions(): string {
   return `You convert medical IVR content into a system prompt for a realtime voice agent.
-Return ONLY valid JSON with this schema. Give several options where appropriate.
+Return ONLY valid JSON with this schema. Prefer to include several options where appropriate.
 {
   "system_prompt": string,
   "final_phrases": [string],
