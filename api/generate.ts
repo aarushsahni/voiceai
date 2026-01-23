@@ -128,6 +128,9 @@ IMPORTANT RULES:
 14. BEFORE saying goodbye, ALWAYS ask 'Is there anything else I can help you with today?' or 'Do you have any other questions or concerns?'
 15. Only proceed to goodbye AFTER the patient explicitly says 'no', 'nothing else', 'that's all', etc. Keep asking if they have concerns until they confirm no.
 16. The goodbye message should be a complete sentence that the agent can finish saying. Don't cut off mid-sentence.
+17. KEEP SPECIFIC CLINICAL DETAILS - If the input mentions specific symptoms (e.g., 'breathing, cough, chest pain'), medications, or conditions, use those EXACT terms in the questions. Do NOT generalize to vague phrases like 'any symptoms' or 'any changes'.
+18. The system_prompt questions should match the specificity of the input. Example: If input says 'Ask about breathing, cough, or chest pain', the prompt MUST say 'How is your breathing? Have you had any cough or chest pain?' - NOT 'Have you noticed any changes in your symptoms?'
+19. Preserve the EXACT wording of clinical questions from the input when possible. Only rephrase for natural speech flow, not to remove specificity.
 `;
 }
 

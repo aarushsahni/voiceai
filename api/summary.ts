@@ -68,21 +68,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             role: 'system',
             content: `You summarize medical IVR call transcripts for clinical review.
-Provide a brief, professional summary covering:
-1. Call outcome (completed, wrong number, etc.)
-2. Key information gathered from patient
-3. Patient's current status/concerns if mentioned
-4. CALLBACK STATUS - clearly state if clinical team needs to follow up
-5. Any specific concerns requiring attention
-Keep it concise (3-5 sentences). Start with callback status if one is needed.`,
+
+CRITICAL RULES:
+1. ONLY report information that was EXPLICITLY stated in the transcript
+2. DO NOT infer, assume, or make up any details
+3. If information was not discussed, say "Not discussed" or omit it
+4. Use direct quotes when possible for patient statements
+5. Be factual and objective - no interpretation
+
+Format:
+- Call outcome: [completed/incomplete/wrong number]
+- Callback needed: [Yes/No]
+- Patient responses: [quote their actual words]
+- Key information gathered: [only what was explicitly said]
+
+Keep it concise (2-4 sentences). Only include facts from the transcript.`,
           },
           {
             role: 'user',
-            content: `Summarize this call:${callbackContext}\n\nTranscript:\n${transcript}`,
+            content: `Summarize this call based ONLY on what was said:${callbackContext}\n\nTranscript:\n${transcript}`,
           },
         ],
-        temperature: 0.3,
-        max_tokens: 250,
+        temperature: 0.1,  // Lower temperature for more factual output
+        max_tokens: 200,
       }),
     });
 
