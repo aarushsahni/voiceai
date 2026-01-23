@@ -43,8 +43,15 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const assistantSpeakingRef = useRef<boolean>(false);
   const responseDelayTimerRef = useRef<number | null>(null);
   
+  // Goodbye detection - only trigger hangup after audio finishes
+  const goodbyeDetectedRef = useRef<boolean>(false);
+  
   // Response delay from voice5.py (RESPONSE_DELAY_SEC = 0.4)
   const RESPONSE_DELAY_MS = 400;
+  
+  // Hangup delay after goodbye - wait for audio to finish playing
+  // voice5.py uses HANGUP_AUDIO_BUFFER_SEC = 2.0
+  const HANGUP_DELAY_MS = 2500;
 
   const isSupported = typeof navigator !== 'undefined' && 
     'mediaDevices' in navigator && 
@@ -113,6 +120,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       setLatency({ lastTurnMs: null, avgMs: null, turnCount: 0 });
       currentAssistantTextRef.current = '';
       pendingUserTranscriptRef.current = null;
+      goodbyeDetectedRef.current = false;
 
       // 1. Get ephemeral token from our API
       const sessionResponse = await fetch('/api/session', {
@@ -328,11 +336,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         if (transcript) {
           addTranscript('assistant', transcript);
           
-          // Check for goodbye
+          // Check for goodbye - but DON'T end call yet
+          // Wait for response.done when all audio has been sent
           if (containsFinalPhrase(transcript)) {
-            setTimeout(() => {
-              endCall();
-            }, 3000); // Wait for audio to finish
+            console.log('[goodbye] Detected in transcript, will end after audio finishes');
+            goodbyeDetectedRef.current = true;
           }
         }
         currentAssistantTextRef.current = '';
@@ -340,17 +348,27 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       }
 
       case 'response.done':
-        // Response complete, waiting for user
+        // Response complete - all audio has been SENT (may still be playing)
         if (status === 'assistant_speaking') {
           updateStatus('connected');
         }
         
-        // NO_BARGE_IN: Unmute mic after assistant finishes
-        // Add small delay to ensure audio playback is complete
-        setTimeout(() => {
-          assistantSpeakingRef.current = false;
-          updateMicMute?.();
-        }, 500);
+        // If goodbye was detected, now end the call after audio buffer
+        // This ensures the full goodbye message is heard
+        if (goodbyeDetectedRef.current) {
+          console.log(`[goodbye] Audio sent, waiting ${HANGUP_DELAY_MS}ms for playback to finish`);
+          setTimeout(() => {
+            console.log('[goodbye] Ending call now');
+            endCall();
+          }, HANGUP_DELAY_MS);
+        } else {
+          // NO_BARGE_IN: Unmute mic after assistant finishes
+          // Add small delay to ensure audio playback is complete
+          setTimeout(() => {
+            assistantSpeakingRef.current = false;
+            updateMicMute?.();
+          }, 500);
+        }
         break;
 
       case 'conversation.item.input_audio_transcription.completed': {

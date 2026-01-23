@@ -86,25 +86,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function buildConversionInstructions(): string {
-  return `You convert medical IVR content into a system prompt AND conversation flow map for a realtime voice agent.
-
-Return ONLY valid JSON with this exact schema:
+  return `You convert medical IVR content into a system prompt for a realtime voice agent.
+Return ONLY valid JSON with this schema:
 {
-  "system_prompt": "string - the full instructions for the voice agent",
-  "final_phrases": ["goodbye", "bye", "take care", ...],
+  "system_prompt": string,
+  "final_phrases": [string],
   "flow": {
-    "title": "string - title of this script",
+    "title": string,
     "steps": [
       {
-        "id": "string - unique step identifier like 'language', 'confirm', 'status'",
-        "label": "string - display label like 'Language Selection'",
-        "question": "string - the question being asked at this step",
-        "info": "string - brief description of what this step collects",
+        "id": string,
+        "label": string,
+        "question": string,
+        "info": string,
         "options": [
-          {
-            "label": "string - display label like 'English' or 'Yes'",
-            "next": "string - next step id or 'END (reason)'"
-          }
+          {"label": string, "keywords": [string], "next": string}
         ]
       }
     ]
@@ -112,27 +108,27 @@ Return ONLY valid JSON with this exact schema:
 }
 
 AGENT PERSONALITY:
-Warm, helpful, conversational; never claim to be human.
+Warm, helpful, quick-talking; conversationally human but never claim to be human.
 
-CRITICAL RULES FOR system_prompt:
-1. START with "Hi [patient_name], this is Penn Medicine calling..." - use EXACTLY '[patient_name]' as placeholder
-2. Combine related questions into natural turns where possible
-3. Use empathetic, human-like language ("I understand", "Thank you for sharing that")
-4. The LAST sentence MUST contain "goodbye" to trigger call end detection
-5. Preserve clinical meaning - no extra medical advice beyond disclaimer
-6. For DETERMINISTIC mode: enforce verbatim reading of key phrases
-7. For EXPLORATIVE mode: same topics/order but allow open-ended follow-ups
-8. If patient expresses concerning symptoms, say "I'll make sure the care team knows, and someone will call you back soon."
-9. BEFORE goodbye, ask "Is there anything else I can help you with?"
-10. Include bilingual support (English/Spanish) if the original script has it
-11. Handle "repeat" requests by repeating the current question
-
-CRITICAL RULES FOR flow:
-1. Each step must have a unique "id" (use lowercase, short identifiers)
-2. Options should cover expected user responses
-3. "next" should reference another step's id, or "END (reason)" for terminal states
-4. Include all branching paths (e.g., both Yes and No responses)
-5. Flow should match the conversation structure in system_prompt`;
+IMPORTANT RULES:
+1. ALWAYS start with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
+2. Combine related questions into single conversational turns where possible (e.g. 'How are you feeling, and have you noticed any changes?').
+3. Use warm, empathetic, human-like language. Add natural phrases like 'I understand', 'Thank you for sharing that', 'That's helpful to know'.
+4. The voice should sound kind and caring, not robotic. Use conversational phrasing.
+5. CRITICAL: The VERY LAST sentence of the script MUST contain the word 'goodbye' - this triggers call end detection. Example: 'Take care, goodbye!' or 'Thank you, goodbye!'
+6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
+7. Each flow step's 'options' should include 'keywords' array with multiple ways a human might express that answer.
+   Example: for 'yes', keywords could be ['yes', 'yeah', 'yep', 'correct', 'that is right', 'uh huh', 'mhm']
+8. Preserve clinical meaning. No extra medical advice beyond disclaimer.
+9. Deterministic mode: enforce verbatim reading of key clinical phrases.
+10. Explorative mode: keep same topics/order, allow open-ended follow-up questions.
+11. Include the personality description in the system_prompt so the voice agent knows how to behave.
+12. If the patient expresses ANY concerning symptoms or urgent issues, ALWAYS say: 'I'll make sure the care team knows about this, and someone will call you back soon.'
+13. Add a flow option for 'concerning/urgent' responses that routes to a message about the care team calling back.
+14. BEFORE saying goodbye, ALWAYS ask 'Is there anything else I can help you with today?' or 'Do you have any other questions or concerns?'
+15. Only proceed to goodbye AFTER the patient explicitly says 'no', 'nothing else', 'that's all', etc. Keep asking if they have concerns until they confirm no.
+16. The goodbye message should be a complete sentence that the agent can finish saying. Don't cut off mid-sentence.
+`;
 }
 
 function buildUserMessage(script: string, inputType: string, mode: string): string {
@@ -142,23 +138,17 @@ function buildUserMessage(script: string, inputType: string, mode: string): stri
 
   if (inputType === 'prompt') {
     return `Mode: ${modeDesc}
-    
-Task: Generate a complete IVR voice agent system prompt AND flow map from this description.
-
-User's description:
+Task: Generate a complete IVR script and flow from this open-ended prompt.
+Remember: Start with Penn Medicine greeting, combine questions where logical, be warm and human, end with goodbye.
+Prompt:
 ${script}
-
-Generate a full conversation flow with greeting, questions, acknowledgments, and closing.
-Return the response as valid JSON with system_prompt, final_phrases, and flow fields.`;
+`;
   }
 
   return `Mode: ${modeDesc}
-
-Task: Convert this SMS/IVR script into a voice agent system prompt AND flow map.
-
-Original script:
+Task: Convert this script into a voice-agent system prompt and flow.
+Remember: Start with Penn Medicine greeting, combine questions where logical, be warm and human, end with goodbye.
+Script:
 ${script}
-
-Convert to a natural voice conversation format while preserving the clinical intent.
-Return the response as valid JSON with system_prompt, final_phrases, and flow fields.`;
+`;
 }
