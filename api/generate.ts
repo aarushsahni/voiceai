@@ -87,7 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 function buildConversionInstructions(): string {
   return `You convert medical IVR content into a system prompt for a realtime voice agent.
-Return ONLY valid JSON with this schema. Prefer to include several options where appropriate.
+Return ONLY valid JSON with this schema:
 {
   "system_prompt": string,
   "final_phrases": [string],
@@ -112,10 +112,11 @@ Warm, helpful, quick-talking; conversationally human but never claim to be human
 
 IMPORTANT RULES:
 1. ALWAYS start with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
+2. Combine related questions into single conversational turns where possible (e.g. 'How are you feeling, and have you noticed any changes?').
 3. Use warm, empathetic, human-like language. Add natural phrases like 'I understand', 'Thank you for sharing that', 'That's helpful to know'.
 4. The voice should sound kind and caring, not robotic. Use conversational phrasing.
 5. CRITICAL: The VERY LAST sentence of the script MUST contain the word 'goodbye' - this triggers call end detection. Example: 'Take care, goodbye!' or 'Thank you, goodbye!'
-6. final_phrases MUST include: ['goodbye', 'take care', 'bye'] 
+6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
 7. Each flow step's 'options' should include 'keywords' array with multiple ways a human might express that answer.
    Example: for 'yes', keywords could be ['yes', 'yeah', 'yep', 'correct', 'that is right', 'uh huh', 'mhm']
 8. Preserve clinical meaning. No extra medical advice beyond disclaimer.
@@ -127,9 +128,8 @@ IMPORTANT RULES:
 14. BEFORE saying goodbye, ALWAYS ask 'Is there anything else I can help you with today?' or 'Do you have any other questions or concerns?'
 15. Only proceed to goodbye AFTER the patient explicitly says 'no', 'nothing else', 'that's all', etc. Keep asking if they have concerns until they confirm no.
 16. The goodbye message should be a complete sentence that the agent can finish saying. Don't cut off mid-sentence.
-17. KEEP SPECIFIC CLINICAL DETAILS - If the input mentions specific symptoms (e.g., 'breathing, cough, chest pain'), medications, or conditions, use those EXACT terms in the questions. Do NOT generalize to vague phrases like 'any symptoms' or 'any changes'.
-18. The system_prompt questions should match the specificity of the input. Example: If input says 'Ask about breathing, cough, or chest pain', the prompt MUST say 'How is your breathing? Have you had any cough or chest pain?' - NOT 'Have you noticed any changes in your symptoms?'
-19. Preserve the EXACT wording of clinical questions from the input when possible. Only rephrase for natural speech flow, not to remove specificity.
+17. Follow the user's input closely: keep the same level of specificity and detail as written in the prompt or script.
+18. Do NOT generalize or paraphrase away important details. Only rephrase for natural speech flow while preserving the original intent and specificity.
 `;
 }
 
@@ -141,7 +141,7 @@ function buildUserMessage(script: string, inputType: string, mode: string): stri
   if (inputType === 'prompt') {
     return `Mode: ${modeDesc}
 Task: Generate a complete IVR script and flow from this open-ended prompt.
-Remember: Start with Penn Medicine greeting, be warm and human, end with goodbye.
+Remember: Start with Penn Medicine greeting, combine questions where logical, be warm and human, end with goodbye.
 Prompt:
 ${script}
 `;
@@ -149,7 +149,7 @@ ${script}
 
   return `Mode: ${modeDesc}
 Task: Convert this script into a voice-agent system prompt and flow.
-Remember: Start with Penn Medicine greeting, be warm and human, end with goodbye.
+Remember: Start with Penn Medicine greeting, combine questions where logical, be warm and human, end with goodbye.
 Script:
 ${script}
 `;
