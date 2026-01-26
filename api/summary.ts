@@ -68,49 +68,95 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             role: 'system',
             content: `You summarize medical IVR call transcripts for clinical review.
+Return ONLY valid JSON with this schema:
+{
+  "outcome": "completed" | "incomplete" | "wrong_number" | "no_answer",
+  "callbackNeeded": boolean,
+  "patientResponses": [string],  // Short phrases summarizing each key response
+  "keyFindings": string,  // 1-2 sentence summary of important information
+  "language": "English" | "Spanish" | "Unknown"
+}
 
 CRITICAL RULES:
 1. ONLY report information that was EXPLICITLY stated in the transcript
 2. DO NOT infer, assume, or make up any details
-3. If information was not discussed, say "Not discussed" or omit it
-4. Use direct quotes when possible for patient statements
-5. Be factual and objective - no interpretation
-
-Format:
-- Call outcome: [completed/incomplete/wrong number]
-- Callback needed: [Yes/No]
-- Patient responses: [quote their actual words]
-- Key information gathered: [only what was explicitly said]
-
-Keep it concise (2-4 sentences). Only include facts from the transcript.`,
+3. patientResponses should be short labels like "Feeling as expected", "Left because wait was too long", "Went home after"
+4. Be factual and objective - no interpretation
+5. If call didn't complete, set outcome appropriately`,
           },
           {
             role: 'user',
             content: `Summarize this call based ONLY on what was said:${callbackContext}\n\nTranscript:\n${transcript}`,
           },
         ],
-        temperature: 0.1,  // Lower temperature for more factual output
-        max_tokens: 200,
+        temperature: 0.1,
+        max_tokens: 300,
+        response_format: { type: 'json_object' },
       }),
     });
 
     if (!response.ok) {
       console.error('OpenAI summary error:', await response.text());
-      return res.status(200).json({ summary: makeLocalSummary() });
+      return res.status(200).json({ 
+        summary: {
+          outcome: 'completed',
+          callbackNeeded: needsCallback || false,
+          patientResponses: [],
+          keyFindings: makeLocalSummary(),
+          language: 'Unknown'
+        }
+      });
     }
 
     const data = await response.json();
-    const summary = data.choices?.[0]?.message?.content?.trim();
+    const content = data.choices?.[0]?.message?.content?.trim();
 
-    if (!summary) {
-      return res.status(200).json({ summary: makeLocalSummary() });
+    if (!content) {
+      return res.status(200).json({ 
+        summary: {
+          outcome: 'completed',
+          callbackNeeded: needsCallback || false,
+          patientResponses: [],
+          keyFindings: makeLocalSummary(),
+          language: 'Unknown'
+        }
+      });
     }
 
-    return res.status(200).json({ summary });
+    // Parse JSON response
+    try {
+      const parsed = JSON.parse(content);
+      return res.status(200).json({ 
+        summary: {
+          outcome: parsed.outcome || 'completed',
+          callbackNeeded: parsed.callbackNeeded ?? (needsCallback || false),
+          patientResponses: parsed.patientResponses || [],
+          keyFindings: parsed.keyFindings || '',
+          language: parsed.language || 'Unknown'
+        }
+      });
+    } catch {
+      // Fallback if JSON parsing fails
+      return res.status(200).json({ 
+        summary: {
+          outcome: 'completed',
+          callbackNeeded: needsCallback || false,
+          patientResponses: [],
+          keyFindings: content,
+          language: 'Unknown'
+        }
+      });
+    }
   } catch (error) {
     console.error('Summary error:', error);
     return res.status(200).json({ 
-      summary: 'Call completed. Unable to generate detailed summary.' 
+      summary: {
+        outcome: 'unknown',
+        callbackNeeded: false,
+        patientResponses: [],
+        keyFindings: 'Call completed. Unable to generate detailed summary.',
+        language: 'Unknown'
+      }
     });
   }
 }

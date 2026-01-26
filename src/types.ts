@@ -52,3 +52,11 @@ export interface ScriptConfig {
   systemPrompt: string;
   voice: string;
 }
+
+export interface CallSummaryData {
+  outcome: 'completed' | 'incomplete' | 'wrong_number' | 'no_answer' | 'unknown';
+  callbackNeeded: boolean;
+  patientResponses: string[];
+  keyFindings: string;
+  language: string;
+}

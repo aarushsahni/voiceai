@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Stethoscope, AlertCircle } from 'lucide-react';
 import { useRealtimeAudio } from './hooks/useRealtimeAudio';
-import { TranscriptEntry, CallStatus, FlowMap as FlowMapType } from './types';
+import { TranscriptEntry, CallStatus, FlowMap as FlowMapType, CallSummaryData } from './types';
 import { CallControls } from './components/CallControls';
 import { StatusIndicator } from './components/StatusIndicator';
 import { Transcript } from './components/Transcript';
@@ -26,7 +26,7 @@ function App() {
     currentStepIdRef.current = currentStepId;
   }, [currentStepId]);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [callSummary, setCallSummary] = useState<string | null>(null);
+  const [callSummary, setCallSummary] = useState<CallSummaryData | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   
   // Custom flow map for generated scripts
@@ -94,7 +94,13 @@ function App() {
     reasons: string[]
   ) => {
     if (timeline.length === 0) {
-      setCallSummary('No conversation recorded.');
+      setCallSummary({
+        outcome: 'incomplete',
+        callbackNeeded: false,
+        patientResponses: [],
+        keyFindings: 'No conversation recorded.',
+        language: 'Unknown'
+      });
       return;
     }
 
@@ -114,11 +120,23 @@ function App() {
         const data = await response.json();
         setCallSummary(data.summary);
       } else {
-        setCallSummary('Call completed. Unable to generate summary.');
+        setCallSummary({
+          outcome: 'completed',
+          callbackNeeded: callbackNeeded,
+          patientResponses: [],
+          keyFindings: 'Call completed. Unable to generate detailed summary.',
+          language: 'Unknown'
+        });
       }
     } catch (err) {
       console.error('Summary generation error:', err);
-      setCallSummary('Call completed. Unable to generate summary.');
+      setCallSummary({
+        outcome: 'completed',
+        callbackNeeded: callbackNeeded,
+        patientResponses: [],
+        keyFindings: 'Call completed. Unable to generate detailed summary.',
+        language: 'Unknown'
+      });
     } finally {
       setIsSummaryLoading(false);
     }
@@ -261,8 +279,14 @@ function App() {
     if (scriptSettings.scriptChoice === 'custom' && scriptSettings.generatedPrompt) {
       // Replace patient name placeholder
       let prompt = scriptSettings.generatedPrompt;
-      if (patientName) {
-        prompt = prompt.replace(/\[patient_name\]/g, patientName);
+      if (patientName && patientName.trim()) {
+        // Replace placeholder with actual name
+        prompt = prompt.replace(/\[patient_name\]/g, patientName.trim());
+      } else {
+        // No patient name - replace "Hi [patient_name]," with "Hello," or similar
+        prompt = prompt.replace(/Hi \[patient_name\],/gi, 'Hello,');
+        prompt = prompt.replace(/Hello \[patient_name\],/gi, 'Hello,');
+        prompt = prompt.replace(/\[patient_name\],?/g, ''); // Remove any remaining placeholders
       }
       return prompt;
     }
