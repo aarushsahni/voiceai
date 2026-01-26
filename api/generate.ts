@@ -131,14 +131,17 @@ Wait for patient response, then:
 - If they say [keywords]: [Response and next step]
 ...
 
-CALLBACK:
+STEP callback - Callback Needed:
 Say: "I want to make sure you get the help you need. Someone from our care team will call you back soon."
-Then go to CLOSING
+Then go to closing
 
-CLOSING:
+STEP closing - Closing:
 Ask: "Is there anything else I can help you with today?"
 - If they say [yes, actually, one more thing]: Address their concern, then ask again
-- If they say [no, nothing, that's all]: Say "Thank you for your time today. Take care, goodbye!"
+- If they say [no, nothing, that's all]: Go to end_call
+
+STEP end_call - End Call:
+Say: "Thank you for your time today. Take care, goodbye!"
 """
 
 IMPORTANT RULES:
@@ -154,7 +157,11 @@ IMPORTANT RULES:
 10. If patient expresses concerning symptoms, say: 'I'll make sure the care team knows, someone will call you back soon.'
 11. BEFORE goodbye, ask 'Is there anything else I can help you with today?'
 12. Only proceed to goodbye AFTER patient confirms no more questions.
-13. The flow JSON should mirror ALL the steps in the script - every step in script = a step in flow.
+13. CRITICAL - EVERY STEP REFERENCED IN "next" MUST EXIST IN THE FLOW:
+    - ALL steps mentioned in the script (CALLBACK, CLOSING, etc.) MUST be defined in the flow.steps array
+    - The "next" field in options must use exact step IDs that exist in the flow
+    - Always include these standard steps: a "callback" step (for concerning issues), a "closing" step (anything else?), and an "end_call" step (goodbye)
+    - Use snake_case IDs like: "check_symptoms", "callback", "closing", "end_call"
 `;
 }
 
