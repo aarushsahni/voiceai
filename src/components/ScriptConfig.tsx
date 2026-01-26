@@ -9,15 +9,21 @@ export interface ScriptSettings {
   scriptChoice: string;
   customScript: string;
   inputType: InputType;
-  generatedPrompt: string | null;
+  generatedScriptContent: string | null;  // Just the script steps (not full prompt)
+  generatedGreeting: string | null;       // Editable first sentence
   voice: string;
+}
+
+interface GenerateResult {
+  scriptContent: string;  // Just the script steps
+  greeting: string;
 }
 
 interface ScriptConfigProps {
   settings: ScriptSettings;
   onSettingsChange: (settings: ScriptSettings) => void;
   disabled?: boolean;
-  onGenerate?: (script: string, inputType: InputType, mode: ScriptMode) => Promise<string | null>;
+  onGenerate?: (script: string, inputType: InputType, mode: ScriptMode) => Promise<GenerateResult | null>;
   isGenerating?: boolean;
 }
 
@@ -62,7 +68,7 @@ export function ScriptConfig({
     onSettingsChange({ 
       ...settings, 
       scriptChoice,
-      generatedPrompt: null, // Reset generated prompt when changing script
+      generatedScriptContent: null, // Reset generated script when changing selection
     });
   };
 
@@ -71,7 +77,11 @@ export function ScriptConfig({
   };
 
   const handleCustomScriptChange = (customScript: string) => {
-    onSettingsChange({ ...settings, customScript, generatedPrompt: null });
+    onSettingsChange({ ...settings, customScript, generatedScriptContent: null, generatedGreeting: null });
+  };
+
+  const handleGreetingChange = (greeting: string) => {
+    onSettingsChange({ ...settings, generatedGreeting: greeting });
   };
 
   const handleGenerate = async () => {
@@ -79,7 +89,11 @@ export function ScriptConfig({
     
     const result = await onGenerate(settings.customScript, settings.inputType, settings.mode);
     if (result) {
-      onSettingsChange({ ...settings, generatedPrompt: result });
+      onSettingsChange({ 
+        ...settings, 
+        generatedScriptContent: result.scriptContent,
+        generatedGreeting: result.greeting,
+      });
     }
   };
 
@@ -278,15 +292,35 @@ export function ScriptConfig({
                   )}
                 </button>
                 
-                {settings.generatedPrompt && (
+                {settings.generatedScriptContent && (
                   <span className="text-sm text-green-600 font-medium">
                     ✓ Script ready
                   </span>
                 )}
               </div>
 
-              {/* Generated Preview */}
-              {settings.generatedPrompt && (
+              {/* Editable Greeting */}
+              {settings.generatedScriptContent && (
+                <div className="mt-4 p-3 bg-white border border-slate-200 rounded-lg">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Opening Greeting (editable)
+                  </label>
+                  <input
+                    type="text"
+                    value={settings.generatedGreeting || ''}
+                    onChange={(e) => handleGreetingChange(e.target.value)}
+                    disabled={disabled}
+                    placeholder="Hi [patient_name], this is Penn Medicine calling..."
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-100 text-sm"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Use [patient_name] as placeholder. This is the first thing the agent will say.
+                  </p>
+                </div>
+              )}
+
+              {/* Generated Script Preview */}
+              {settings.generatedScriptContent && (
                 <div className="mt-4">
                   <button
                     onClick={() => setPreviewExpanded(!previewExpanded)}
@@ -297,12 +331,12 @@ export function ScriptConfig({
                     ) : (
                       <ChevronDown className="w-4 h-4" />
                     )}
-                    Preview generated prompt
+                    Preview generated script
                   </button>
                   
                   {previewExpanded && (
                     <pre className="mt-2 p-3 bg-white border border-slate-200 rounded text-xs text-slate-600 overflow-auto max-h-48">
-                      {settings.generatedPrompt}
+                      {settings.generatedScriptContent}
                     </pre>
                   )}
                 </div>

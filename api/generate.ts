@@ -73,7 +73,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     return res.status(200).json({
-      systemPrompt: parsed.system_prompt || '',
+      greeting: parsed.greeting || 'Hello, this is Penn Medicine calling about your recent visit.',
+      scriptContent: parsed.script || '',  // Just the script steps, not full system prompt
       finalPhrases: parsed.final_phrases || ['goodbye', 'bye', 'take care'],
       flowMap: parsed.flow || null,
     });
@@ -86,10 +87,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function buildConversionInstructions(): string {
-  return `You convert medical IVR content into a system prompt for a realtime voice agent.
+  return `You generate SCRIPT CONTENT for a medical IVR voice agent. 
+NOTE: You are NOT generating the full system prompt - just the script steps that will be inserted into a base template.
+
 Return ONLY valid JSON with this schema:
 {
-  "system_prompt": string,
+  "greeting": string,  // The exact first sentence (use [patient_name] placeholder)
+  "script": string,    // The step-by-step script content (see format below)
   "final_phrases": [string],
   "flow": {
     "title": string,
@@ -107,21 +111,40 @@ Return ONLY valid JSON with this schema:
   }
 }
 
-AGENT PERSONALITY:
-Warm, helpful, quick-talking; conversationally human but never claim to be human.
+THE "script" FIELD FORMAT - Generate step-by-step instructions like this:
 
-IMPORTANT RULES:
-1. ALWAYS start with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
-2. Combine related questions into single conversational turns where possible.
-3. Use warm, empathetic, human-like language.
-4. CRITICAL: The VERY LAST sentence MUST contain 'goodbye' - this triggers call end detection.
-5. final_phrases MUST include: ['goodbye', 'take care', 'bye']
-6. Each option should include 'keywords' array with multiple ways a human might express that answer.
-7. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant.
-8. Preserve clinical meaning. No extra medical advice beyond disclaimer.
-9. If patient expresses concerning symptoms, say: 'I'll make sure the care team knows, someone will call you back soon.'
-10. BEFORE goodbye, ask 'Is there anything else I can help you with today?'
-11. Only proceed to goodbye AFTER patient confirms no more questions.
+"""
+STEP 1 - [STEP_NAME]:
+Ask: "[EXACT QUESTION TO ASK]"
+Wait for patient response, then:
+- If they say [keywords like: good, fine, better, okay]: Say "I'm glad to hear that." then go to STEP 2
+- If they say [keywords like: bad, worse, pain, concerning]: Say "I'm sorry to hear that. I'll make sure the care team knows about this, and someone will call you back soon." then go to CALLBACK
+- If unclear: Say "I didn't quite catch that." then repeat the question
+
+STEP 2 - [STEP_NAME]:
+Ask: "[NEXT QUESTION]"
+Wait for patient response, then:
+- If they say [keywords]: [Response and next step]
+...
+
+CALLBACK:
+Say: "I want to make sure you get the help you need. Someone from our care team will call you back soon."
+Then go to CLOSING
+
+CLOSING:
+Ask: "Is there anything else I can help you with today?"
+- If they say [yes, actually, one more thing]: Address their concern, then ask again
+- If they say [no, nothing, that's all]: Say "Thank you for your time today. Take care, goodbye!"
+"""
+
+RULES:
+1. The greeting should use [patient_name] placeholder (will be replaced or removed at runtime)
+2. Each step must have clear keyword matching for responses
+3. Always include a path to CALLBACK for concerning symptoms
+4. Always end with CLOSING that asks if they need anything else
+5. The final message MUST contain "goodbye"
+6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
+7. The flow JSON should mirror the steps in the script
 `;
 }
 

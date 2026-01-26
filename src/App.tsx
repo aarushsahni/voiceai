@@ -11,6 +11,7 @@ import { CallSummary } from './components/CallSummary';
 import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
+import { buildFullSystemPrompt } from './utils/basePrompt';
 
 function App() {
   const [patientName, setPatientName] = useState('');
@@ -42,7 +43,8 @@ function App() {
     scriptChoice: 'ed-followup-v1',
     customScript: '',
     inputType: 'script',
-    generatedPrompt: null,
+    generatedScriptContent: null,
+    generatedGreeting: null,
     voice: 'cedar', // Default voice from voice5.py
   });
 
@@ -230,12 +232,12 @@ function App() {
     onError: handleError,
   });
 
-  // Generate/convert custom script - now also returns flow map
+  // Generate/convert custom script - returns script content and greeting
   const handleGenerateScript = useCallback(async (
     script: string,
     inputType: InputType,
     mode: ScriptMode
-  ): Promise<string | null> => {
+  ): Promise<{ scriptContent: string; greeting: string } | null> => {
     setIsGenerating(true);
     setError(null);
 
@@ -263,7 +265,10 @@ function App() {
         setCustomFlowMap(null);
       }
       
-      return data.systemPrompt;
+      return {
+        scriptContent: data.scriptContent || '',
+        greeting: data.greeting || 'Hello, this is Penn Medicine calling.',
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to generate script';
       setError(message);
@@ -275,21 +280,25 @@ function App() {
 
   // Get the system prompt to use for the call
   const getCallSystemPrompt = useCallback((): string => {
-    // If custom script with generated prompt, use that
-    if (scriptSettings.scriptChoice === 'custom' && scriptSettings.generatedPrompt) {
-      let prompt = scriptSettings.generatedPrompt;
-      
-      // Replace [patient_name] placeholder with actual name or empty string
+    // If custom script with generated content, combine with base template
+    if (scriptSettings.scriptChoice === 'custom' && scriptSettings.generatedScriptContent) {
+      // Get the greeting and replace patient name placeholder
+      let greeting = scriptSettings.generatedGreeting || 'Hello, this is Penn Medicine calling.';
       const nameToUse = patientName?.trim() || '';
-      prompt = prompt.replace(/\[patient_name\]/g, nameToUse);
       
-      // Clean up any awkward spacing from empty replacement
-      // "Hi , this is" -> "Hi, this is"
-      prompt = prompt.replace(/Hi\s+,/g, 'Hi,');
-      // "Hi, this is" with no name sounds odd, change to "Hello, this is"
-      prompt = prompt.replace(/^(.*?)Hi,\s*this is/i, '$1Hello, this is');
+      // Replace [patient_name] placeholder
+      greeting = greeting.replace(/\[patient_name\]/g, nameToUse);
       
-      return prompt;
+      // Clean up awkward spacing if no name provided
+      greeting = greeting.replace(/Hi\s+,/g, 'Hi,');
+      greeting = greeting.replace(/^Hi,\s*this is/i, 'Hello, this is');
+      
+      // Get the script content and replace patient name there too
+      let scriptContent = scriptSettings.generatedScriptContent;
+      scriptContent = scriptContent.replace(/\[patient_name\]/g, nameToUse);
+      
+      // Build the full system prompt by combining base template + greeting + script
+      return buildFullSystemPrompt(scriptContent, greeting);
     }
 
     // Use built-in scripts
@@ -299,7 +308,7 @@ function App() {
   // Start a new call
   const handleStartCall = useCallback(() => {
     // Validate custom script if selected
-    if (scriptSettings.scriptChoice === 'custom' && !scriptSettings.generatedPrompt) {
+    if (scriptSettings.scriptChoice === 'custom' && !scriptSettings.generatedScriptContent) {
       setError('Please generate a script first by clicking "Generate Script" or "Convert Script"');
       return;
     }

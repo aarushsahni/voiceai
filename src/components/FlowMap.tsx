@@ -23,6 +23,7 @@ export function FlowMap({
   const [regeneratingStepId, setRegeneratingStepId] = useState<string | null>(null);
   const [editingOptionIndex, setEditingOptionIndex] = useState<{ stepId: string; index: number } | null>(null);
   const [editingOptionLabel, setEditingOptionLabel] = useState('');
+  const [editingOptionNext, setEditingOptionNext] = useState('');
 
   const getStepStatus = (step: FlowStep) => {
     if (completedSteps.has(step.id)) return 'completed';
@@ -77,7 +78,7 @@ export function FlowMap({
     }
   };
 
-  const handleOptionLabelSave = (stepId: string, optionIndex: number) => {
+  const handleOptionSave = (stepId: string, optionIndex: number) => {
     if (!editingOptionLabel.trim()) {
       setEditingOptionIndex(null);
       return;
@@ -86,7 +87,11 @@ export function FlowMap({
     const updatedSteps = flowMap.steps.map(step => {
       if (step.id === stepId) {
         const updatedOptions = step.options.map((opt, idx) => 
-          idx === optionIndex ? { ...opt, label: editingOptionLabel.trim() } : opt
+          idx === optionIndex ? { 
+            ...opt, 
+            label: editingOptionLabel.trim(),
+            next: editingOptionNext.trim() || opt.next,
+          } : opt
         );
         return { ...step, options: updatedOptions };
       }
@@ -96,6 +101,7 @@ export function FlowMap({
     onFlowMapChange?.({ ...flowMap, steps: updatedSteps });
     setEditingOptionIndex(null);
     setEditingOptionLabel('');
+    setEditingOptionNext('');
   };
 
   const handleDeleteOption = (stepId: string, optionIndex: number) => {
@@ -273,42 +279,60 @@ export function FlowMap({
                             return (
                               <div 
                                 key={optIdx}
-                                className="flex items-center gap-2 p-1.5 bg-slate-50 rounded group"
+                                className={`p-1.5 bg-slate-50 rounded group ${isEditingThis ? 'ring-1 ring-indigo-300' : ''}`}
                               >
                                 {isEditingThis ? (
-                                  <>
-                                    <input
-                                      type="text"
-                                      value={editingOptionLabel}
-                                      onChange={(e) => setEditingOptionLabel(e.target.value)}
-                                      className="flex-1 text-xs px-2 py-1 border border-indigo-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                                      autoFocus
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleOptionLabelSave(step.id, optIdx);
-                                        if (e.key === 'Escape') setEditingOptionIndex(null);
-                                      }}
-                                    />
-                                    <button
-                                      onClick={() => handleOptionLabelSave(step.id, optIdx)}
-                                      className="p-1 text-green-600 hover:bg-green-100 rounded"
-                                    >
-                                      <Check className="w-3 h-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingOptionIndex(null)}
-                                      className="p-1 text-slate-400 hover:bg-slate-200 rounded"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  </>
+                                  <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <label className="text-xs text-slate-500 w-12">Label:</label>
+                                      <input
+                                        type="text"
+                                        value={editingOptionLabel}
+                                        onChange={(e) => setEditingOptionLabel(e.target.value)}
+                                        className="flex-1 text-xs px-2 py-1 border border-indigo-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                        autoFocus
+                                        placeholder="Option label"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <label className="text-xs text-slate-500 w-12">Next:</label>
+                                      <select
+                                        value={editingOptionNext}
+                                        onChange={(e) => setEditingOptionNext(e.target.value)}
+                                        className="flex-1 text-xs px-2 py-1 border border-indigo-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                                      >
+                                        {flowMap.steps.map((s) => (
+                                          <option key={s.id} value={s.id}>{s.label}</option>
+                                        ))}
+                                        <option value="end_call">End Call</option>
+                                        <option value="schedule_callback">Schedule Callback</option>
+                                        <option value="continue">Continue</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex justify-end gap-1">
+                                      <button
+                                        onClick={() => setEditingOptionIndex(null)}
+                                        className="px-2 py-1 text-xs text-slate-600 hover:bg-slate-200 rounded"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        onClick={() => handleOptionSave(step.id, optIdx)}
+                                        className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                                      >
+                                        Save
+                                      </button>
+                                    </div>
+                                  </div>
                                 ) : (
-                                  <>
+                                  <div className="flex items-center gap-2">
                                     <span className="flex-1 text-xs text-slate-700">{option.label}</span>
-                                    <span className="text-xs text-slate-400">→ {option.next}</span>
+                                    <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">→ {option.next}</span>
                                     <button
                                       onClick={() => {
                                         setEditingOptionIndex({ stepId: step.id, index: optIdx });
                                         setEditingOptionLabel(option.label);
+                                        setEditingOptionNext(option.next);
                                       }}
                                       className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                                     >
