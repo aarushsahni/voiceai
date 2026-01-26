@@ -379,6 +379,8 @@ function App() {
             disabled={isCallActive}
             onGenerate={handleGenerateScript}
             isGenerating={isGenerating}
+            flowMap={customFlowMap}
+            onLoadFlowMap={setCustomFlowMap}
           />
         </div>
 

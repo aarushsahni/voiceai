@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Settings, Wand2, FileText, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Settings, Wand2, FileText, ChevronDown, ChevronUp, Loader2, Save, FolderOpen, Trash2 } from 'lucide-react';
+import { FlowMap as FlowMapType } from '../types';
 
 export type ScriptMode = 'deterministic' | 'explorative';
 export type InputType = 'script' | 'prompt';
@@ -19,12 +20,28 @@ interface GenerateResult {
   greeting: string;
 }
 
+// Saved script structure for localStorage
+export interface SavedScript {
+  id: string;
+  name: string;
+  customScript: string;
+  generatedScriptContent: string;
+  generatedGreeting: string;
+  flowMap: FlowMapType | null;
+  mode: ScriptMode;
+  savedAt: string;
+}
+
+const SAVED_SCRIPTS_KEY = 'ivr-saved-scripts';
+
 interface ScriptConfigProps {
   settings: ScriptSettings;
   onSettingsChange: (settings: ScriptSettings) => void;
   disabled?: boolean;
   onGenerate?: (script: string, inputType: InputType, mode: ScriptMode) => Promise<GenerateResult | null>;
   isGenerating?: boolean;
+  flowMap?: FlowMapType | null;  // Current flow map for saving
+  onLoadFlowMap?: (flowMap: FlowMapType | null) => void;  // Callback to load flow map
 }
 
 const SCRIPT_OPTIONS = [
@@ -50,11 +67,75 @@ export function ScriptConfig({
   disabled,
   onGenerate,
   isGenerating,
+  flowMap,
+  onLoadFlowMap,
 }: ScriptConfigProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveName, setSaveName] = useState('');
 
   const isCustom = settings.scriptChoice === 'custom';
+
+  // Load saved scripts from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SAVED_SCRIPTS_KEY);
+      if (saved) {
+        setSavedScripts(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.error('Failed to load saved scripts:', e);
+    }
+  }, []);
+
+  // Save scripts to localStorage
+  const persistScripts = (scripts: SavedScript[]) => {
+    try {
+      localStorage.setItem(SAVED_SCRIPTS_KEY, JSON.stringify(scripts));
+      setSavedScripts(scripts);
+    } catch (e) {
+      console.error('Failed to save scripts:', e);
+    }
+  };
+
+  const handleSaveScript = () => {
+    if (!saveName.trim() || !settings.generatedScriptContent) return;
+    
+    const newScript: SavedScript = {
+      id: Date.now().toString(),
+      name: saveName.trim(),
+      customScript: settings.customScript,
+      generatedScriptContent: settings.generatedScriptContent,
+      generatedGreeting: settings.generatedGreeting || '',
+      flowMap: flowMap || null,
+      mode: settings.mode,
+      savedAt: new Date().toISOString(),
+    };
+    
+    persistScripts([...savedScripts, newScript]);
+    setShowSaveDialog(false);
+    setSaveName('');
+  };
+
+  const handleLoadScript = (script: SavedScript) => {
+    onSettingsChange({
+      ...settings,
+      scriptChoice: 'custom',
+      customScript: script.customScript,
+      generatedScriptContent: script.generatedScriptContent,
+      generatedGreeting: script.generatedGreeting,
+      mode: script.mode,
+    });
+    if (onLoadFlowMap && script.flowMap) {
+      onLoadFlowMap(script.flowMap);
+    }
+  };
+
+  const handleDeleteScript = (id: string) => {
+    persistScripts(savedScripts.filter(s => s.id !== id));
+  };
 
   const handleModeChange = (mode: ScriptMode) => {
     onSettingsChange({ ...settings, mode });
@@ -251,6 +332,42 @@ export function ScriptConfig({
                 </div>
               </div>
 
+              {/* Saved Scripts */}
+              {savedScripts.length > 0 && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    <FolderOpen className="w-4 h-4 inline mr-1" />
+                    Load Saved Script
+                  </label>
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {savedScripts.map((script) => (
+                      <div
+                        key={script.id}
+                        className="flex items-center justify-between p-2 bg-white rounded border border-slate-200 hover:border-indigo-300 transition-colors"
+                      >
+                        <button
+                          onClick={() => handleLoadScript(script)}
+                          disabled={disabled}
+                          className="flex-1 text-left text-sm text-slate-700 hover:text-indigo-600"
+                        >
+                          <span className="font-medium">{script.name}</span>
+                          <span className="text-xs text-slate-400 ml-2">
+                            {new Date(script.savedAt).toLocaleDateString()}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteScript(script.id)}
+                          className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
+                          title="Delete saved script"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Text Input */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -273,7 +390,7 @@ export function ScriptConfig({
               </div>
 
               {/* Generate Button */}
-              <div className="mt-3 flex items-center gap-3">
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
                 <button
                   onClick={handleGenerate}
                   disabled={disabled || isGenerating || !settings.customScript.trim()}
@@ -293,11 +410,53 @@ export function ScriptConfig({
                 </button>
                 
                 {settings.generatedScriptContent && (
-                  <span className="text-sm text-green-600 font-medium">
-                    ✓ Script ready
-                  </span>
+                  <>
+                    <span className="text-sm text-green-600 font-medium">
+                      ✓ Script ready
+                    </span>
+                    <button
+                      onClick={() => setShowSaveDialog(true)}
+                      disabled={disabled}
+                      className="flex items-center gap-1 px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg border border-indigo-200 transition-colors"
+                    >
+                      <Save className="w-4 h-4" />
+                      Save Script
+                    </button>
+                  </>
                 )}
               </div>
+
+              {/* Save Dialog */}
+              {showSaveDialog && (
+                <div className="mt-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                  <label className="block text-sm font-medium text-indigo-700 mb-2">
+                    Save script as:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={saveName}
+                      onChange={(e) => setSaveName(e.target.value)}
+                      placeholder="e.g., ED Follow-up Custom"
+                      className="flex-1 px-3 py-2 text-sm border border-indigo-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveScript()}
+                    />
+                    <button
+                      onClick={handleSaveScript}
+                      disabled={!saveName.trim()}
+                      className="px-3 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700 disabled:bg-slate-300"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => { setShowSaveDialog(false); setSaveName(''); }}
+                      className="px-3 py-2 text-slate-600 text-sm hover:bg-slate-100 rounded-lg"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Editable Greeting */}
               {settings.generatedScriptContent && (
