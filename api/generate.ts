@@ -111,18 +111,22 @@ Return ONLY valid JSON with this schema:
   }
 }
 
+AGENT PERSONALITY:
+Warm, helpful, quick-talking; conversationally human but never claim to be human.
+
 THE "script" FIELD FORMAT - Generate step-by-step instructions like this:
 
 """
 STEP 1 - [STEP_NAME]:
-Ask: "[EXACT QUESTION TO ASK]"
+Ask: "[EXACT QUESTION TO ASK - be specific based on user's prompt]"
 Wait for patient response, then:
-- If they say [keywords like: good, fine, better, okay]: Say "I'm glad to hear that." then go to STEP 2
-- If they say [keywords like: bad, worse, pain, concerning]: Say "I'm sorry to hear that. I'll make sure the care team knows about this, and someone will call you back soon." then go to CALLBACK
+- If they say [keywords]: Say "[response]" then go to [NEXT_STEP]
+- If they say [other keywords]: Say "[response]" then go to [DIFFERENT_STEP]
+- If concerning symptoms: Say "I'll make sure the care team knows about this, and someone will call you back soon." then go to CALLBACK
 - If unclear: Say "I didn't quite catch that." then repeat the question
 
 STEP 2 - [STEP_NAME]:
-Ask: "[NEXT QUESTION]"
+Ask: "[NEXT SPECIFIC QUESTION]"
 Wait for patient response, then:
 - If they say [keywords]: [Response and next step]
 ...
@@ -137,14 +141,20 @@ Ask: "Is there anything else I can help you with today?"
 - If they say [no, nothing, that's all]: Say "Thank you for your time today. Take care, goodbye!"
 """
 
-RULES:
-1. The greeting should use [patient_name] placeholder (will be replaced or removed at runtime)
-2. Each step must have clear keyword matching for responses
-3. Always include a path to CALLBACK for concerning symptoms
-4. Always end with CLOSING that asks if they need anything else
-5. The final message MUST contain "goodbye"
+IMPORTANT RULES:
+1. ALWAYS start greeting with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
+2. ASK ONE QUESTION PER STEP - do not combine multiple questions. Each step should have exactly one question the patient needs to answer.
+3. KEEP QUESTIONS SPECIFIC - preserve specific clinical details from the user's prompt (e.g., "How is your breathing?" not "How are you feeling?")
+4. Use warm, empathetic, human-like language.
+5. CRITICAL: The VERY LAST sentence MUST contain 'goodbye' - this triggers call end detection.
 6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
-7. The flow JSON should mirror the steps in the script
+7. Each option should include 'keywords' array with multiple ways a human might express that answer.
+8. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant. Options should be descriptive (e.g., "Medication received, no questions" vs "Medication received, has questions" vs "Medication not received").
+9. Preserve clinical meaning. No extra medical advice beyond disclaimer.
+10. If patient expresses concerning symptoms, say: 'I'll make sure the care team knows, someone will call you back soon.'
+11. BEFORE goodbye, ask 'Is there anything else I can help you with today?'
+12. Only proceed to goodbye AFTER patient confirms no more questions.
+13. The flow JSON should mirror ALL the steps in the script - every step in script = a step in flow.
 `;
 }
 
