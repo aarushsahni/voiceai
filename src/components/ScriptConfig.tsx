@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Wand2, FileText, ChevronDown, ChevronUp, Loader2, Save, FolderOpen, Trash2 } from 'lucide-react';
+import { Settings, Wand2, FileText, ChevronDown, ChevronUp, Loader2, Save, Trash2 } from 'lucide-react';
 import { FlowMap as FlowMapType } from '../types';
 
 export type ScriptMode = 'deterministic' | 'explorative';
@@ -47,7 +47,7 @@ interface ScriptConfigProps {
 const SCRIPT_OPTIONS = [
   { id: 'ed-followup-v1', name: 'ED Follow-up (Standard)' },
   { id: 'ed-followup-short', name: 'ED Follow-up (Short)' },
-  { id: 'custom', name: 'Custom Script' },
+  { id: 'custom', name: '+ Generate New Script' },
 ];
 
 // Voice options from OpenAI Realtime API
@@ -143,10 +143,21 @@ export function ScriptConfig({
   };
 
   const handleScriptChoiceChange = (scriptChoice: string) => {
+    // Check if this is a saved script (prefixed with 'saved:')
+    if (scriptChoice.startsWith('saved:')) {
+      const savedId = scriptChoice.replace('saved:', '');
+      const savedScript = savedScripts.find(s => s.id === savedId);
+      if (savedScript) {
+        handleLoadScript(savedScript);
+        return;
+      }
+    }
+    
     onSettingsChange({ 
       ...settings, 
       scriptChoice,
       generatedScriptContent: null, // Reset generated script when changing selection
+      generatedGreeting: null,
     });
   };
 
@@ -255,12 +266,48 @@ export function ScriptConfig({
                 disabled={disabled}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
               >
-                {SCRIPT_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
+                {/* Built-in scripts */}
+                <optgroup label="Built-in Scripts">
+                  {SCRIPT_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.name}
+                    </option>
+                  ))}
+                </optgroup>
+                
+                {/* Saved scripts */}
+                {savedScripts.length > 0 && (
+                  <optgroup label="Saved Scripts">
+                    {savedScripts.map((script) => (
+                      <option key={script.id} value={`saved:${script.id}`}>
+                        {script.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
+              
+              {/* Delete saved script button - only show when a saved script is loaded */}
+              {settings.scriptChoice === 'custom' && settings.generatedScriptContent && (
+                <div className="mt-2 flex items-center gap-2">
+                  {savedScripts.some(s => 
+                    s.generatedScriptContent === settings.generatedScriptContent
+                  ) && (
+                    <button
+                      onClick={() => {
+                        const match = savedScripts.find(s => 
+                          s.generatedScriptContent === settings.generatedScriptContent
+                        );
+                        if (match) handleDeleteScript(match.id);
+                      }}
+                      className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Delete saved script
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             
             <div>
@@ -328,42 +375,6 @@ export function ScriptConfig({
                   </label>
                 </div>
               </div>
-
-              {/* Saved Scripts */}
-              {savedScripts.length > 0 && (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    <FolderOpen className="w-4 h-4 inline mr-1" />
-                    Load Saved Script
-                  </label>
-                  <div className="space-y-2 max-h-32 overflow-y-auto">
-                    {savedScripts.map((script) => (
-                      <div
-                        key={script.id}
-                        className="flex items-center justify-between p-2 bg-white rounded border border-slate-200 hover:border-indigo-300 transition-colors"
-                      >
-                        <button
-                          onClick={() => handleLoadScript(script)}
-                          disabled={disabled}
-                          className="flex-1 text-left text-sm text-slate-700 hover:text-indigo-600"
-                        >
-                          <span className="font-medium">{script.name}</span>
-                          <span className="text-xs text-slate-400 ml-2">
-                            {new Date(script.savedAt).toLocaleDateString()}
-                          </span>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteScript(script.id)}
-                          className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
-                          title="Delete saved script"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Text Input */}
               <div>
