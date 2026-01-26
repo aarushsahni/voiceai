@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Stethoscope, AlertCircle } from 'lucide-react';
 import { useRealtimeAudio } from './hooks/useRealtimeAudio';
 import { TranscriptEntry, CallStatus, FlowMap as FlowMapType } from './types';
@@ -17,8 +17,14 @@ function App() {
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
+  const currentStepIdRef = useRef<string | null>(null);
   const [completedSteps, setCompletedSteps] = useState<Set<string>>(new Set());
   const [matchedOptions, setMatchedOptions] = useState<Map<string, string>>(new Map());
+  
+  // Keep ref in sync with state for use in callbacks
+  useEffect(() => {
+    currentStepIdRef.current = currentStepId;
+  }, [currentStepId]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [callSummary, setCallSummary] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
@@ -130,11 +136,11 @@ function App() {
         const callbackCheck = checkAssistantForCallback(entry.text);
         if (callbackCheck.needed && callbackCheck.reason) {
           setNeedsCallback(true);
-          setCallbackReasons(prev => {
-            if (!prev.includes(callbackCheck.reason!)) {
-              return [...prev, callbackCheck.reason!];
+          setCallbackReasons(prevReasons => {
+            if (!prevReasons.includes(callbackCheck.reason!)) {
+              return [...prevReasons, callbackCheck.reason!];
             }
-            return prev;
+            return prevReasons;
           });
         }
         
@@ -143,30 +149,39 @@ function App() {
           updated.map((t) => ({ role: t.role, text: t.text })),
           activeFlowMap
         );
-        if (newStep && newStep !== currentStepId) {
+        // Use ref for latest value (avoid stale closure)
+        const prevStepId = currentStepIdRef.current;
+        if (newStep && newStep !== prevStepId) {
           // Mark previous step as completed
-          if (currentStepId) {
-            setCompletedSteps((prevCompleted) => new Set([...prevCompleted, currentStepId]));
+          if (prevStepId) {
+            setCompletedSteps((prevCompleted) => new Set([...prevCompleted, prevStepId]));
           }
           setCurrentStepId(newStep);
+          currentStepIdRef.current = newStep; // Update ref immediately
         }
-      } else if (entry.role === 'user' && currentStepId) {
-        // Try local match first
-        const localMatch = matchUserResponse(entry.text, currentStepId, activeFlowMap);
-        if (localMatch) {
-          setMatchedOptions((prev) => new Map([...prev, [currentStepId, localMatch]]));
-        } else {
-          // Fall back to LLM matching (async, won't block)
-          const step = activeFlowMap.steps.find(s => s.id === currentStepId);
-          if (step) {
-            matchAnswerWithLLM(step.question, entry.text, currentStepId, activeFlowMap);
+      } else if (entry.role === 'user') {
+        // Use ref for latest step ID (handles rapid updates)
+        const stepId = currentStepIdRef.current;
+        if (stepId) {
+          // Try local match first
+          const localMatch = matchUserResponse(entry.text, stepId, activeFlowMap);
+          if (localMatch) {
+            console.log(`[match] Local match found: "${localMatch}" for step ${stepId}`);
+            setMatchedOptions((prev) => new Map([...prev, [stepId, localMatch]]));
+          } else {
+            // Fall back to LLM matching (async, won't block)
+            const step = activeFlowMap.steps.find(s => s.id === stepId);
+            if (step) {
+              console.log(`[match] No local match, trying LLM for step ${stepId}`);
+              matchAnswerWithLLM(step.question, entry.text, stepId, activeFlowMap);
+            }
           }
         }
       }
 
       return updated;
     });
-  }, [currentStepId, activeFlowMap, matchAnswerWithLLM]);
+  }, [activeFlowMap, matchAnswerWithLLM]);
 
   // Handle status changes
   const handleStatusChange = useCallback((newStatus: CallStatus) => {

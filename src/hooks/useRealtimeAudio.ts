@@ -146,14 +146,23 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       const pc = new RTCPeerConnection();
       peerConnectionRef.current = pc;
 
-      // 3. Set up audio element for playback
+      // 3. Set up audio element for playback with optimized settings
       const audioEl = document.createElement('audio');
       audioEl.autoplay = true;
+      audioEl.playsInline = true;
+      // Preload setting helps with buffering (though WebRTC manages this internally)
+      audioEl.preload = 'auto';
       audioElementRef.current = audioEl;
 
       // Handle incoming audio track
       pc.ontrack = (event) => {
-        audioEl.srcObject = event.streams[0];
+        const stream = event.streams[0];
+        audioEl.srcObject = stream;
+        
+        // Ensure playback starts immediately when audio is available
+        audioEl.play().catch(err => {
+          console.log('[audio] Autoplay blocked, user interaction required:', err);
+        });
       };
 
       // 4. Get user's microphone
@@ -377,7 +386,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           setTimeout(() => {
             assistantSpeakingRef.current = false;
             updateMicMute?.();
-            console.log('[mic] Unmuted - ready for user');
+            updateStatus('listening');  // Now actively listening for patient
+            console.log('[mic] Unmuted - listening to patient');
           }, 800);  // Slightly longer delay to ensure audio finishes
         }
         break;

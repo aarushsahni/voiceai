@@ -26,9 +26,16 @@ const statusConfig: Record<CallStatus, {
   },
   connected: {
     icon: <Phone className="w-5 h-5" />,
-    text: 'Connected - Waiting',
+    text: 'Connected',
     bgColor: 'bg-green-100',
     textColor: 'text-green-700',
+  },
+  listening: {
+    icon: <Mic className="w-5 h-5" />,
+    text: 'Listening to patient...',
+    bgColor: 'bg-teal-100',
+    textColor: 'text-teal-700',
+    animate: true,
   },
   assistant_speaking: {
     icon: <Volume2 className="w-5 h-5" />,
@@ -79,7 +86,7 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
         <div className={`font-semibold ${config.textColor}`}>
           {config.text}
         </div>
-        {(status === 'assistant_speaking' || status === 'user_speaking') && (
+        {(status === 'assistant_speaking' || status === 'user_speaking' || status === 'listening') && (
           <div className={`audio-wave mt-1 ${config.textColor}`}>
             <span></span>
             <span></span>

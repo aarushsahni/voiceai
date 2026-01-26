@@ -33,6 +33,7 @@ export type CallStatus =
   | 'idle' 
   | 'connecting' 
   | 'connected' 
+  | 'listening'  // Mic is active, waiting for patient to speak
   | 'assistant_speaking' 
   | 'user_speaking' 
   | 'processing' 
