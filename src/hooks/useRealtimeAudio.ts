@@ -60,9 +60,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Response delay from voice5.py (RESPONSE_DELAY_SEC = 0.4)
   const RESPONSE_DELAY_MS = 400;
   
-  // Silence detection thresholds
-  const SILENCE_THRESHOLD = 5;  // Audio level below this is considered silence
-  const SILENCE_DURATION_MS = 300;  // How long silence must persist to trigger callback
+  // Silence detection thresholds (using RMS audio level)
+  const SILENCE_THRESHOLD = 0.01;  // RMS level below this is considered silence (0-1 scale)
+  const SILENCE_DURATION_MS = 400;  // How long silence must persist to trigger callback
   const MAX_WAIT_FOR_SILENCE_MS = 15000;  // Maximum time to wait before giving up
 
   const isSupported = typeof navigator !== 'undefined' && 
@@ -85,6 +85,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   }, [onTranscript]);
 
   // Wait for audio to go silent (actual playback finished)
+  // Uses RMS (Root Mean Square) of time-domain data for accurate silence detection
   const waitForAudioSilence = useCallback((onSilence: () => void, fallbackDelayMs: number) => {
     // Clear any existing monitor
     if (audioMonitorIntervalRef.current) {
@@ -100,41 +101,54 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       return;
     }
     
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    // Use time-domain data for more accurate silence detection
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
     let silenceStartTime: number | null = null;
     const startTime = Date.now();
+    let hasSeenAudio = false;  // Track if we've seen audio at all
     
     // Store callback for cleanup
     onAudioSilenceCallbackRef.current = onSilence;
     
     // Check audio levels periodically
     audioMonitorIntervalRef.current = window.setInterval(() => {
-      analyser.getByteFrequencyData(dataArray);
+      analyser.getByteTimeDomainData(dataArray);
       
-      // Calculate average audio level
-      const avgLevel = dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
+      // Calculate RMS (Root Mean Square) - measures actual audio energy
+      // Time domain data is centered at 128 (silent = all 128s)
+      let sumSquares = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const normalized = (dataArray[i] - 128) / 128;  // Normalize to -1 to 1
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / bufferLength);
       
-      if (avgLevel < SILENCE_THRESHOLD) {
-        // Audio is silent
+      const isSilent = rms < SILENCE_THRESHOLD;
+      
+      // Only start checking for silence after we've detected some audio
+      if (!isSilent) {
+        hasSeenAudio = true;
+        silenceStartTime = null;
+      } else if (hasSeenAudio) {
+        // Audio has dropped to silence
         if (!silenceStartTime) {
           silenceStartTime = Date.now();
-          console.log('[audio] Silence started');
+          console.log(`[audio] Silence started (RMS: ${rms.toFixed(4)})`);
         } else if (Date.now() - silenceStartTime >= SILENCE_DURATION_MS) {
-          // Sustained silence detected
-          console.log(`[audio] Silence confirmed after ${Date.now() - startTime}ms`);
+          // Sustained silence detected after audio was playing
+          console.log(`[audio] Silence confirmed after ${Date.now() - startTime}ms total`);
           if (audioMonitorIntervalRef.current) {
             clearInterval(audioMonitorIntervalRef.current);
             audioMonitorIntervalRef.current = null;
           }
           onAudioSilenceCallbackRef.current = null;
           onSilence();
+          return;
         }
-      } else {
-        // Audio is playing
-        silenceStartTime = null;
       }
       
-      // Safety timeout
+      // Safety timeout - if we've been waiting too long, use fallback
       if (Date.now() - startTime >= MAX_WAIT_FOR_SILENCE_MS) {
         console.log('[audio] Max wait time reached, proceeding anyway');
         if (audioMonitorIntervalRef.current) {
@@ -144,7 +158,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         onAudioSilenceCallbackRef.current = null;
         onSilence();
       }
-    }, 50);  // Check every 50ms
+    }, 30);  // Check every 30ms for more responsive detection
   }, []);
 
   const endCall = useCallback(() => {

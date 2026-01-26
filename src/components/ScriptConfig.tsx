@@ -50,14 +50,11 @@ const SCRIPT_OPTIONS = [
   { id: 'custom', name: 'Custom Script' },
 ];
 
-// Voice options from OpenAI (cedar is default in voice5.py)
+// Voice options from OpenAI Realtime API
 const VOICE_OPTIONS = [
   { id: 'cedar', name: 'Cedar (default)' },
   { id: 'alloy', name: 'Alloy' },
   { id: 'echo', name: 'Echo' },
-  { id: 'fable', name: 'Fable' },
-  { id: 'onyx', name: 'Onyx' },
-  { id: 'nova', name: 'Nova' },
   { id: 'shimmer', name: 'Shimmer' },
 ];
 
