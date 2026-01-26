@@ -15,6 +15,7 @@ export interface FlowStep {
 
 export interface FlowOption {
   label: string;
+  keywords?: string[];  // voice5.py includes keywords for matching
   next: string;
 }
 

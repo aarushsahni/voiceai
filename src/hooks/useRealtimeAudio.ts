@@ -11,7 +11,7 @@ interface UseRealtimeAudioOptions {
 interface UseRealtimeAudioReturn {
   status: CallStatus;
   latency: LatencyInfo;
-  startCall: (patientName?: string, systemPrompt?: string, voice?: string) => Promise<void>;
+  startCall: (patientName?: string, systemPrompt?: string, voice?: string, mode?: string) => Promise<void>;
   endCall: () => void;
   isSupported: boolean;
 }
@@ -104,7 +104,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const startCall = useCallback(async (
     patientName?: string,
     systemPrompt?: string,
-    voice: string = 'alloy'
+    voice: string = 'cedar',
+    mode: string = 'deterministic'
   ) => {
     if (!isSupported) {
       onError?.('Browser does not support audio recording');
@@ -129,7 +130,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         body: JSON.stringify({ 
           patientName, 
           systemPrompt: systemPrompt || '', 
-          voice 
+          voice,
+          mode
         }),
       });
 
@@ -187,8 +189,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         updateStatus('connected');
         addTranscript('system', 'Connected - call starting');
         
-        // Send initial response.create to trigger greeting
-        dc.send(JSON.stringify({ type: 'response.create' }));
+        // Greeting preroll delay from voice5.py (GREETING_PREROLL_SEC = 0.2)
+        // Small delay before sending initial response to ensure connection is stable
+        setTimeout(() => {
+          dc.send(JSON.stringify({ type: 'response.create' }));
+        }, 200);
       };
 
       dc.onmessage = (event) => {

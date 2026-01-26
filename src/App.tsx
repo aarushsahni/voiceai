@@ -274,7 +274,7 @@ function App() {
     setCallbackReasons([]);
 
     const systemPrompt = getCallSystemPrompt();
-    startCall(patientName || undefined, systemPrompt, scriptSettings.voice);
+    startCall(patientName || undefined, systemPrompt, scriptSettings.voice, scriptSettings.mode);
   }, [patientName, scriptSettings, getCallSystemPrompt, startCall]);
 
   // End current call

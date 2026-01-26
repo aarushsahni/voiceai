@@ -119,22 +119,15 @@ IMPORTANT RULES:
 6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
 7. Each flow step's 'options' should include 'keywords' array with multiple ways a human might express that answer.
    Example: for 'yes', keywords could be ['yes', 'yeah', 'yep', 'correct', 'that is right', 'uh huh', 'mhm']
-8. FLOW OPTIONS MUST BE DESCRIPTIVE AND GRANULAR: If a question asks about multiple things (e.g., "Have you received medications? Do you have questions?"), create separate options for each combination:
-   - "Medications received, no questions"
-   - "Medications received, has questions"
-   - "Medications not received"
-   Do NOT create overly simple options like just "Medications received" when the question also asks about questions. The options should reflect all dimensions of the question being asked.
-9. Preserve clinical meaning. No extra medical advice beyond disclaimer.
-10. Deterministic mode: enforce verbatim reading of key clinical phrases.
-11. Explorative mode: keep same topics/order, allow open-ended follow-up questions.
-12. Include the personality description in the system_prompt so the voice agent knows how to behave.
-13. If the patient expresses ANY concerning symptoms or urgent issues, ALWAYS say: 'I'll make sure the care team knows about this, and someone will call you back soon.'
-14. Add a flow option for 'concerning/urgent' responses that routes to a message about the care team calling back.
-15. BEFORE saying goodbye, ALWAYS ask 'Is there anything else I can help you with today?' or 'Do you have any other questions or concerns?'
-16. Only proceed to goodbye AFTER the patient explicitly says 'no', 'nothing else', 'that's all', etc. Keep asking if they have concerns until they confirm no.
-17. The goodbye message should be a complete sentence that the agent can finish saying. Don't cut off mid-sentence.
-18. Follow the user's input closely: keep the same level of specificity and detail as written in the prompt or script.
-19. Do NOT generalize or paraphrase away important details. Only rephrase for natural speech flow while preserving the original intent and specificity.
+8. Preserve clinical meaning. No extra medical advice beyond disclaimer.
+9. Deterministic mode: enforce verbatim reading of key clinical phrases.
+10. Explorative mode: keep same topics/order, allow open-ended follow-up questions.
+11. Include the personality description in the system_prompt so the voice agent knows how to behave.
+12. If the patient expresses ANY concerning symptoms or urgent issues, ALWAYS say: 'I'll make sure the care team knows about this, and someone will call you back soon.'
+13. Add a flow option for 'concerning/urgent' responses that routes to a message about the care team calling back.
+14. BEFORE saying goodbye, ALWAYS ask 'Is there anything else I can help you with today?' or 'Do you have any other questions or concerns?'
+15. Only proceed to goodbye AFTER the patient explicitly says 'no', 'nothing else', 'that's all', etc. Keep asking if they have concerns until they confirm no.
+16. The goodbye message should be a complete sentence that the agent can finish saying. Don't cut off mid-sentence.
 `;
 }
 

@@ -260,8 +260,8 @@ export function matchUserResponse(
 
   const lower = userText.toLowerCase();
   
-  // Common variations mapping
-  const variations: Record<string, string[]> = {
+  // Fallback variations for built-in scripts (voice5.py style)
+  const fallbackVariations: Record<string, string[]> = {
     'english': ['english', 'inglés', 'ingles'],
     'español': ['español', 'spanish', 'espanol'],
     'yes': ['yes', 'yeah', 'yep', 'correct', "that's right", 'si', 'sí'],
@@ -284,9 +284,16 @@ export function matchUserResponse(
       return option.label;
     }
     
-    // Check variations
-    const optionVariations = variations[optionLower];
-    if (optionVariations && optionVariations.some(v => lower.includes(v))) {
+    // Check option's keywords first (from generated scripts - voice5.py format)
+    if (option.keywords && option.keywords.length > 0) {
+      if (option.keywords.some(k => lower.includes(k.toLowerCase()))) {
+        return option.label;
+      }
+    }
+    
+    // Fall back to hardcoded variations for built-in scripts
+    const fallbackKws = fallbackVariations[optionLower];
+    if (fallbackKws && fallbackKws.some(v => lower.includes(v))) {
       return option.label;
     }
   }

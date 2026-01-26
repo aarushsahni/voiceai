@@ -15,7 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { systemPrompt, voice = 'alloy', patientName } = req.body || {};
+    const { systemPrompt, voice = 'cedar', patientName, mode = 'deterministic' } = req.body || {};
 
     // Use provided system prompt or fall back to default
     let instructions = systemPrompt;
@@ -25,7 +25,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       instructions = getDefaultSystemPrompt(patientName);
     }
 
+    // Temperature from voice5.py: 0.6 for deterministic, 0.9 for explorative
+    const temperature = mode === 'explorative' ? 0.9 : 0.6;
+
     // Create ephemeral token via OpenAI API
+    // Match voice5.py session.update configuration exactly
     const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
       method: 'POST',
       headers: {
@@ -35,18 +39,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: JSON.stringify({
         model: 'gpt-4o-realtime-preview-2024-12-17',
         voice: voice,
-        instructions: instructions,
+        instructions: instructions.trim(),  // voice5.py uses .strip()
+        modalities: ['text', 'audio'],  // voice5.py sets this
+        input_audio_format: 'pcm16',  // voice5.py sets this
+        output_audio_format: 'pcm16',  // voice5.py sets this
         input_audio_transcription: {
-          model: 'whisper-1',
+          model: 'whisper-1',  // voice5.py: TRANSCRIPTION_ENABLED = True
         },
-        // VAD settings from voice5.py - tuned for lower sensitivity
+        // VAD settings from voice5.py - exact values
         turn_detection: {
           type: 'server_vad',
-          threshold: 0.6,              // Higher = less sensitive (voice5.py: 0.6)
-          prefix_padding_ms: 200,      // voice5.py: 200
-          silence_duration_ms: 400,    // voice5.py: 400
-          create_response: false,      // We manually trigger responses with delay
+          silence_duration_ms: 400,    // voice5.py: VAD_SILENCE_DURATION_MS = 400
+          prefix_padding_ms: 200,      // voice5.py: VAD_PREFIX_PADDING_MS = 200
+          threshold: 0.6,              // voice5.py: VAD_THRESHOLD = 0.6
+          create_response: false,      // voice5.py: create_response: False
         },
+        max_response_output_tokens: 1024,  // voice5.py sets this
+        temperature: temperature,  // voice5.py: self.temperature (0.6 or 0.9)
       }),
     });
 
