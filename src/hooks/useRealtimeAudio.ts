@@ -176,7 +176,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       // Function to mute mic while assistant is speaking (NO_BARGE_IN from voice5.py)
       const updateMicMute = () => {
         if (audioTrack) {
-          audioTrack.enabled = !assistantSpeakingRef.current;
+          const shouldMute = assistantSpeakingRef.current;
+          audioTrack.enabled = !shouldMute;
+          console.log(`[mic] Track enabled: ${audioTrack.enabled} (assistant speaking: ${shouldMute})`);
         }
       };
 
@@ -192,6 +194,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         // Greeting preroll delay from voice5.py (GREETING_PREROLL_SEC = 0.2)
         // Small delay before sending initial response to ensure connection is stable
         setTimeout(() => {
+          // Mute mic BEFORE triggering greeting (NO_BARGE_IN)
+          assistantSpeakingRef.current = true;
+          updateMicMute();
           dc.send(JSON.stringify({ type: 'response.create' }));
         }, 200);
       };
@@ -298,16 +303,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
         }
+        // NO_BARGE_IN: Mute mic as soon as response starts (before audio plays)
+        assistantSpeakingRef.current = true;
+        updateMicMute?.();
+        console.log('[mic] Muted - response starting');
         break;
 
       case 'response.audio_transcript.delta': {
         // Assistant is speaking - first audio chunk
         if (status !== 'assistant_speaking') {
           updateStatus('assistant_speaking');
-          
-          // NO_BARGE_IN: Mute mic while assistant speaks
-          assistantSpeakingRef.current = true;
-          updateMicMute?.();
           
           // Calculate latency
           if (speechStoppedTimeRef.current) {
@@ -368,11 +373,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           }, HANGUP_DELAY_MS);
         } else {
           // NO_BARGE_IN: Unmute mic after assistant finishes
-          // Add small delay to ensure audio playback is complete
+          // Add delay to ensure audio playback is complete before listening again
           setTimeout(() => {
             assistantSpeakingRef.current = false;
             updateMicMute?.();
-          }, 500);
+            console.log('[mic] Unmuted - ready for user');
+          }, 800);  // Slightly longer delay to ensure audio finishes
         }
         break;
 
