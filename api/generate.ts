@@ -112,22 +112,16 @@ Warm, helpful, quick-talking; conversationally human but never claim to be human
 
 IMPORTANT RULES:
 1. ALWAYS start with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
-2. Combine related questions into single conversational turns where possible (e.g. 'How are you feeling, and have you noticed any changes?').
-3. Use warm, empathetic, human-like language. Add natural phrases like 'I understand', 'Thank you for sharing that', 'That's helpful to know'.
-4. The voice should sound kind and caring, not robotic. Use conversational phrasing.
-5. CRITICAL: The VERY LAST sentence of the script MUST contain the word 'goodbye' - this triggers call end detection. Example: 'Take care, goodbye!' or 'Thank you, goodbye!'
-6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
-7. Each flow step's 'options' should include 'keywords' array with multiple ways a human might express that answer.
-   Example: for 'yes', keywords could be ['yes', 'yeah', 'yep', 'correct', 'that is right', 'uh huh', 'mhm']
+2. Combine related questions into single conversational turns where possible.
+3. Use warm, empathetic, human-like language.
+4. CRITICAL: The VERY LAST sentence MUST contain 'goodbye' - this triggers call end detection.
+5. final_phrases MUST include: ['goodbye', 'take care', 'bye']
+6. Each option should include 'keywords' array with multiple ways a human might express that answer.
+7. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant.
 8. Preserve clinical meaning. No extra medical advice beyond disclaimer.
-9. Deterministic mode: enforce verbatim reading of key clinical phrases.
-10. Explorative mode: keep same topics/order, allow open-ended follow-up questions.
-11. Include the personality description in the system_prompt so the voice agent knows how to behave.
-12. If the patient expresses ANY concerning symptoms or urgent issues, ALWAYS say: 'I'll make sure the care team knows about this, and someone will call you back soon.'
-13. Add a flow option for 'concerning/urgent' responses that routes to a message about the care team calling back.
-14. BEFORE saying goodbye, ALWAYS ask 'Is there anything else I can help you with today?' or 'Do you have any other questions or concerns?'
-15. Only proceed to goodbye AFTER the patient explicitly says 'no', 'nothing else', 'that's all', etc. Keep asking if they have concerns until they confirm no.
-16. The goodbye message should be a complete sentence that the agent can finish saying. Don't cut off mid-sentence.
+9. If patient expresses concerning symptoms, say: 'I'll make sure the care team knows, someone will call you back soon.'
+10. BEFORE goodbye, ask 'Is there anything else I can help you with today?'
+11. Only proceed to goodbye AFTER patient confirms no more questions.
 `;
 }
 
@@ -139,7 +133,7 @@ function buildUserMessage(script: string, inputType: string, mode: string): stri
   if (inputType === 'prompt') {
     return `Mode: ${modeDesc}
 Task: Generate a complete IVR script and flow from this open-ended prompt.
-Remember: Start with Penn Medicine greeting, combine questions where logical, be warm and human, end with goodbye.
+Remember: Start with Penn Medicine greeting, use [patient_name] placeholder, be warm and human, end with goodbye.
 Prompt:
 ${script}
 `;
@@ -147,7 +141,7 @@ ${script}
 
   return `Mode: ${modeDesc}
 Task: Convert this script into a voice-agent system prompt and flow.
-Remember: Start with Penn Medicine greeting, combine questions where logical, be warm and human, end with goodbye.
+Remember: Start with Penn Medicine greeting, use [patient_name] placeholder, be warm and human, end with goodbye.
 Script:
 ${script}
 `;

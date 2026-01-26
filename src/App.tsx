@@ -277,17 +277,18 @@ function App() {
   const getCallSystemPrompt = useCallback((): string => {
     // If custom script with generated prompt, use that
     if (scriptSettings.scriptChoice === 'custom' && scriptSettings.generatedPrompt) {
-      // Replace patient name placeholder
       let prompt = scriptSettings.generatedPrompt;
-      if (patientName && patientName.trim()) {
-        // Replace placeholder with actual name
-        prompt = prompt.replace(/\[patient_name\]/g, patientName.trim());
-      } else {
-        // No patient name - replace "Hi [patient_name]," with "Hello," or similar
-        prompt = prompt.replace(/Hi \[patient_name\],/gi, 'Hello,');
-        prompt = prompt.replace(/Hello \[patient_name\],/gi, 'Hello,');
-        prompt = prompt.replace(/\[patient_name\],?/g, ''); // Remove any remaining placeholders
-      }
+      
+      // Replace [patient_name] placeholder with actual name or empty string
+      const nameToUse = patientName?.trim() || '';
+      prompt = prompt.replace(/\[patient_name\]/g, nameToUse);
+      
+      // Clean up any awkward spacing from empty replacement
+      // "Hi , this is" -> "Hi, this is"
+      prompt = prompt.replace(/Hi\s+,/g, 'Hi,');
+      // "Hi, this is" with no name sounds odd, change to "Hello, this is"
+      prompt = prompt.replace(/^(.*?)Hi,\s*this is/i, '$1Hello, this is');
+      
       return prompt;
     }
 
@@ -416,6 +417,12 @@ function App() {
             currentStepId={currentStepId}
             completedSteps={completedSteps}
             matchedOptions={matchedOptions}
+            editable={scriptSettings.scriptChoice === 'custom' && status === 'idle'}
+            onFlowMapChange={(newFlowMap) => {
+              if (scriptSettings.scriptChoice === 'custom') {
+                setCustomFlowMap(newFlowMap);
+              }
+            }}
           />
 
           {/* Transcript */}
