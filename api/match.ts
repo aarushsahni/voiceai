@@ -37,21 +37,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messages: [
           {
             role: 'system',
-            content: `You match user responses to expected answer options.
+            content: `You are a precise response matcher for medical IVR calls.
 Return ONLY a JSON object with: {"match": <option_number or 0 if no match>, "confidence": <0.0-1.0>}
-If the user's response clearly indicates one of the options, return its number (1-indexed).
-If unclear or doesn't match any option, return 0.`,
+
+CRITICAL MATCHING RULES:
+1. PAY CLOSE ATTENTION TO NEGATIONS - "no questions", "don't have", "not received" are OPPOSITE of "has questions", "do have", "received"
+2. Match the COMPLETE meaning, not just keywords
+3. "I got them but I don't have any questions" = received + NO questions (not "has questions")
+4. "I didn't get them" = NOT received
+5. "I'm fine" or "doing well" = positive/good outcome
+6. "I'm having problems" or "it's worse" = concerning/negative outcome
+7. If truly ambiguous, return 0
+
+Be VERY careful - incorrectly matching a positive response as negative (or vice versa) affects patient care.`,
           },
           {
             role: 'user',
-            content: `Question asked: ${question || 'N/A'}
+            content: `Question: ${question || 'N/A'}
 
-User's response: "${userResponse}"
+Patient said: "${userResponse}"
 
-Expected options:
+Options:
 ${optionsStr}
 
-Which option does the user's response match?`,
+Analyze the patient's COMPLETE response including any negations. Which option matches?`,
           },
         ],
         temperature: 0.1,
