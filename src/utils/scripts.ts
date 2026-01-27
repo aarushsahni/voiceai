@@ -330,6 +330,14 @@ export function inferFlowStep(
   if (text.includes('feeling') || text.includes('concern')) return 'general_status';
   if (text.includes('why did you leave')) return 'reason';
   if (text.includes('where did you go')) return 'disposition';
+  
+  // Check for closing/end_call by common phrases (even when paraphrased)
+  if (text.includes('goodbye') || text.includes('take care') || text.includes('bye')) {
+    return 'end_call';
+  }
+  if (text.includes('anything else') || text.includes('help you with')) {
+    return 'closing';
+  }
 
   return null;
 }

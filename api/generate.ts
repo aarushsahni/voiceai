@@ -143,25 +143,16 @@ CRITICAL REQUIREMENTS:
 
 SCRIPT FORMAT EXAMPLE:
 """
-STEP symptoms - Check Symptoms:
-Ask: "[Question about symptoms]"
-- If improving: Acknowledge, go to medications
-- If has concerns: Go to callback, return_to medications (triggers_callback: true)
+STEP [step_id] - [Step Label]:
+Ask: "[Question with specific details from prompt]"
+- If [positive]: Acknowledge, go to [next_step]
+- If [needs callback]: Go to callback, return_to [next_step] (triggers_callback: true)
 - If unclear: Repeat question
 
-STEP medications - Check Medications:
-Ask: "[Question about medications]"
-- If no issues: Acknowledge, go to equipment
-- If has questions: Go to callback, return_to equipment (triggers_callback: true)
+[... create steps for ALL topics from the user's prompt ...]
 
 STEP callback - Callback:
 Say: "I'll make sure the care team knows about this, and someone will call you back soon."
-(Runtime uses return_to from the triggering option to continue)
-
-STEP closing - Closing:
-Ask: "Is there anything else I can help you with today?"
-- If yes: Go to callback, return_to closing (triggers_callback: true)
-- If no: Go to end_call
 
 STEP end_call - End Call:
 Say: "Thank you for your time today. Take care, goodbye!"
@@ -175,7 +166,7 @@ FLOW RULES:
 5. Each option needs "next" pointing to an existing step ID
 6. Callback options need: "triggers_callback": true, "next": "callback", "return_to": "[next_main_step_id]"
 7. Include ONE "callback" step that says the callback message (runtime handles continuation via return_to)
-8. Always include "closing" and "end_call" steps at the end
+8. The LAST main step should go directly to "end_call" - do NOT include a "closing" step
 9. The LAST sentence must contain "goodbye"
 10. final_phrases: ["goodbye", "take care", "bye"]
 11. Each option needs a "keywords" array with natural variations

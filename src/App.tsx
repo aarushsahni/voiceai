@@ -199,6 +199,12 @@ function App() {
   // Handle status changes
   const handleStatusChange = useCallback((newStatus: CallStatus) => {
     if (newStatus === 'ended') {
+      // Mark current step as completed when call ends
+      const finalStepId = currentStepIdRef.current;
+      if (finalStepId) {
+        setCompletedSteps((prevCompleted) => new Set([...prevCompleted, finalStepId]));
+      }
+      
       // Generate call summary when call ends - include callback status
       setTranscripts(current => {
         // Access current callback state
