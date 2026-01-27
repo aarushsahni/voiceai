@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Settings, Wand2, FileText, ChevronDown, ChevronUp, Loader2, Save, Trash2 } from 'lucide-react';
 import { FlowMap as FlowMapType } from '../types';
 
-export type ScriptMode = 'deterministic' | 'explorative';
+export type ScriptMode = 'deterministic';
 export type InputType = 'script' | 'prompt';
 
 export interface ScriptSettings {
@@ -46,7 +46,6 @@ interface ScriptConfigProps {
 
 const SCRIPT_OPTIONS = [
   { id: 'ed-followup-v1', name: 'ED Follow-up (Standard)' },
-  { id: 'ed-followup-short', name: 'ED Follow-up (Short)' },
   { id: 'custom', name: '+ Generate New Script' },
 ];
 
@@ -134,10 +133,6 @@ export function ScriptConfig({
     persistScripts(savedScripts.filter(s => s.id !== id));
   };
 
-  const handleModeChange = (mode: ScriptMode) => {
-    onSettingsChange({ ...settings, mode });
-  };
-
   const handleVoiceChange = (voice: string) => {
     onSettingsChange({ ...settings, voice });
   };
@@ -206,54 +201,6 @@ export function ScriptConfig({
 
       {isExpanded && (
         <div className="px-4 pb-4 border-t border-slate-100">
-          {/* Mode Selection */}
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Conversation Mode
-            </label>
-            <div className="flex gap-4">
-              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-colors ${
-                settings.mode === 'deterministic' 
-                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700' 
-                  : 'border-slate-200 hover:border-slate-300'
-              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <input
-                  type="radio"
-                  name="mode"
-                  value="deterministic"
-                  checked={settings.mode === 'deterministic'}
-                  onChange={() => handleModeChange('deterministic')}
-                  disabled={disabled}
-                  className="sr-only"
-                />
-                <div>
-                  <div className="font-medium">Deterministic</div>
-                  <div className="text-xs text-slate-500">Follow script verbatim</div>
-                </div>
-              </label>
-              
-              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-colors ${
-                settings.mode === 'explorative' 
-                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700' 
-                  : 'border-slate-200 hover:border-slate-300'
-              } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                <input
-                  type="radio"
-                  name="mode"
-                  value="explorative"
-                  checked={settings.mode === 'explorative'}
-                  onChange={() => handleModeChange('explorative')}
-                  disabled={disabled}
-                  className="sr-only"
-                />
-                <div>
-                  <div className="font-medium">Explorative</div>
-                  <div className="text-xs text-slate-500">Natural conversation, same topics</div>
-                </div>
-              </label>
-            </div>
-          </div>
-
           {/* Script and Voice Selection - side by side */}
           <div className="mt-4 grid grid-cols-2 gap-4">
             <div>
@@ -511,22 +458,6 @@ export function ScriptConfig({
             </div>
           )}
 
-          {/* Mode Description */}
-          <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
-            <div className="text-sm text-blue-800">
-              {settings.mode === 'deterministic' ? (
-                <>
-                  <strong>Deterministic mode:</strong> The AI will follow the script exactly as written,
-                  using verbatim phrases for questions and acknowledgments. Best for compliance and consistency.
-                </>
-              ) : (
-                <>
-                  <strong>Explorative mode:</strong> The AI will follow the same topic order but can
-                  ask open-ended follow-up questions and respond more naturally. Best for gathering detailed feedback.
-                </>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </div>

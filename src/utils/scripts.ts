@@ -1,60 +1,18 @@
 import { FlowMap } from '../types';
 
-// System prompts for different modes
+// System prompt for ED follow-up
 export function getSystemPrompt(
   scriptId: string, 
-  mode: 'deterministic' | 'explorative',
+  mode: 'deterministic',
   patientName?: string
 ): string {
   const name = patientName || '[patient_name]';
-  
-  if (scriptId === 'ed-followup-short') {
-    return getShortScriptPrompt(mode, name);
-  }
-  
-  // Default: ed-followup-v1
-  return getStandardScriptPrompt(mode, name);
+  return getStandardScriptPrompt(name);
 }
 
-function getStandardScriptPrompt(mode: 'deterministic' | 'explorative', patientName: string): string {
+function getStandardScriptPrompt(patientName: string): string {
   const greeting = `Hi ${patientName}, this is Penn Medicine Lancaster General Health calling about your recent emergency room visit.`;
   
-  if (mode === 'explorative') {
-    return `
-Penn Medicine LGH ED follow-up call. Be warm and conversational.
-Use the exact start prompt, then ask open-ended questions within the same topic order.
-Do not add new medical advice beyond the disclaimer.
-
-START (verbatim): "${greeting} To continue in English, please say 'English'. Para continuar en español, por favor diga 'Español'."
-
-ENGLISH FLOW (open-ended):
-1. English → "Thank you. We care about your recovery. Our records show you recently left the emergency department before your visit was complete. Is that correct?"
-2. Yes → "Ok, thank you. This call has three quick questions. First, how are you feeling since leaving the ER?"
-   No → "No problem, sorry to have bothered you. Goodbye." [END]
-3. Listen to their response about how they're feeling. If they have concerns, acknowledge and note for callback.
-   Then ask: "What led you to leave the ER before your visit was finished?"
-4. Listen to their reason. Acknowledge appropriately.
-   Then ask: "Where did you go after leaving?"
-5. After they answer → "Thank you for sharing. Is there anything else I can help you with today?"
-6. If nothing else → "If you have any serious health concerns, please contact your doctor or seek emergency care. Thank you for your time today. Take care, goodbye!" [END]
-
-SPANISH FLOW (open-ended):
-1. Español → "Gracias. Nos preocupamos por su recuperación. Nuestros registros muestran que salió del departamento de emergencias antes de completar su visita. ¿Es correcto?"
-2. Sí → "Está bien, gracias. Esta llamada tiene tres preguntas. Primero, ¿cómo se siente desde que salió de emergencias?"
-   No → "No hay problema, disculpe la molestia. Adiós." [END]
-3. Escuche su respuesta. Si tiene preocupaciones, reconózcalas.
-   Luego pregunte: "¿Qué le llevó a salir de emergencias antes de terminar su visita?"
-4. Escuche. Reconozca apropiadamente.
-   Luego pregunte: "¿A dónde fue después de salir?"
-5. Después de que respondan → "Gracias por compartir. ¿Hay algo más en que pueda ayudarle hoy?"
-6. Si no hay nada más → "Si tiene preocupaciones de salud serias, contacte a su médico o busque atención de emergencia. Gracias por su tiempo. ¡Cuídese, adiós!" [END]
-
-If unclear, say "Sorry, I didn't catch that" and repeat the question.
-Accept natural variations in responses.
-`.trim();
-  }
-
-  // Deterministic mode
   return `
 Penn Medicine LGH ED follow-up call. Read scripts VERBATIM. Be warm and conversational.
 
@@ -84,64 +42,6 @@ SPANISH FLOW:
 
 If unclear: "Sorry, I didn't catch that." then repeat current question.
 Accept natural variations: "home"/"went home", "yes"/"yeah"/"correct", etc.
-`.trim();
-}
-
-function getShortScriptPrompt(mode: 'deterministic' | 'explorative', patientName: string): string {
-  const greeting = `Hi ${patientName}, this is Penn Medicine calling about your recent ER visit.`;
-  
-  if (mode === 'explorative') {
-    return `
-Penn Medicine LGH ED follow-up call (short version). Be warm and conversational.
-
-START: "${greeting} To continue in English, say 'English'. Para español, diga 'Español'."
-
-ENGLISH FLOW (conversational):
-1. English → "Thanks for answering. Our records show you left before your visit was complete. Is that correct?"
-2. Yes → "How are you feeling since leaving?"
-   No → "Sorry to bother you. Goodbye." [END]
-3. Listen and acknowledge. Then: "What led you to leave early?"
-4. Listen and acknowledge. Then: "Where did you go after?"
-5. After answer → "Anything else I can help with?"
-6. If no → "If you have health concerns, contact your doctor. Take care, goodbye!" [END]
-
-SPANISH FLOW (conversational):
-1. Español → "Gracias. Nuestros registros muestran que salió antes de completar su visita. ¿Es correcto?"
-2. Sí → "¿Cómo se siente desde que salió?"
-   No → "Disculpe la molestia. Adiós." [END]
-3. Escuche y reconozca. Luego: "¿Qué le llevó a salir antes?"
-4. Escuche y reconozca. Luego: "¿A dónde fue después?"
-5. Después → "¿Algo más en que pueda ayudarle?"
-6. Si no → "Si tiene preocupaciones de salud, contacte a su médico. ¡Cuídese, adiós!" [END]
-
-Keep responses brief. Accept natural language.
-`.trim();
-  }
-
-  return `
-Penn Medicine LGH ED follow-up call (short). Read scripts VERBATIM.
-
-START: "${greeting} To continue in English, say 'English'. Para español, diga 'Español'."
-
-ENGLISH FLOW:
-1. English → "Thanks for answering. Our records show you left before your visit was complete. Is that correct? Say 'Yes' or 'No'."
-2. Yes → "How are you feeling? Say 'As expected' or 'Have a concern'."
-   No → "Sorry to bother you. Goodbye." [END]
-3. Expected → "Good to hear. Why did you leave? Say 'Wait too long', 'Felt better', or 'Felt worse'."
-   Concern → "I understand, we'll have someone call you back. Why did you leave? Say 'Wait too long', 'Felt better', or 'Felt worse'."
-4. Answer → "Got it. Where did you go after? Say 'Home', 'Another ER', or 'Somewhere else'."
-5. Answer → "Thank you. If you have health concerns, contact your doctor. Take care, goodbye!" [END]
-
-SPANISH FLOW:
-1. Español → "Gracias. Nuestros registros muestran que salió antes de completar su visita. ¿Es correcto? Diga 'Sí' o 'No'."
-2. Sí → "¿Cómo se siente? Diga 'Como esperaba' o 'Tengo preocupación'."
-   No → "Disculpe la molestia. Adiós." [END]
-3. Esperaba → "Me alegra. ¿Por qué salió? Diga 'Espera larga', 'Me sentí mejor' o 'Me sentí peor'."
-   Preocupación → "Entiendo, alguien le llamará. ¿Por qué salió? Diga 'Espera larga', 'Me sentí mejor' o 'Me sentí peor'."
-4. Respuesta → "Entendido. ¿A dónde fue? Diga 'Casa', 'Otra sala de emergencias' o 'Otro lugar'."
-5. Respuesta → "Gracias. Si tiene preocupaciones de salud, contacte a su médico. ¡Cuídese, adiós!" [END]
-
-Accept natural variations.
 `.trim();
 }
 
@@ -211,24 +111,6 @@ export const scriptConfigs: ScriptConfig[] = [
     name: 'ED Follow-up (Standard)',
     voice: 'alloy',
     systemPrompt: '', // Uses default from API
-  },
-  {
-    id: 'ed-followup-short',
-    name: 'ED Follow-up (Short)',
-    voice: 'alloy',
-    systemPrompt: `Penn Medicine LGH ED follow-up call (short version). Be warm and conversational.
-
-START: "Hello, this is Penn Medicine calling about your recent ER visit. To continue in English, say 'English'. Para español, diga 'Español'."
-
-ENGLISH FLOW:
-1. English → "Thanks for answering. Our records show you left before your visit was complete. Is that correct?"
-2. Yes → "How are you feeling? Say 'As expected' or 'Have a concern'."
-   No → "Sorry to bother you. Goodbye." [END]
-3. Answer status → "Why did you leave? Say 'Wait too long', 'Felt better', or 'Felt worse'."
-4. Answer reason → "Where did you go after? Say 'Home', 'Another ER', or 'Somewhere else'."
-5. Answer → "Thank you. If you have health concerns, contact your doctor. Take care, goodbye!" [END]
-
-Accept natural variations. Keep responses brief.`,
   },
 ];
 

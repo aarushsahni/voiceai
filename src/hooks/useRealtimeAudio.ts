@@ -362,10 +362,22 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       dc.onclose = () => {
         console.log('Data channel closed');
-        // Don't end call if we're waiting for goodbye audio or already ending
-        if (!endingCallRef.current && !waitingForGoodbyeRef.current) {
-          endCall();
+        // If already ending, skip
+        if (endingCallRef.current) {
+          return;
         }
+        // If waiting for goodbye audio, set a fallback timeout to ensure call ends
+        if (waitingForGoodbyeRef.current) {
+          setTimeout(() => {
+            if (!endingCallRef.current) {
+              console.log('[fallback] Ending call after data channel close');
+              endCall();
+            }
+          }, 2000); // 2s fallback
+          return;
+        }
+        // Otherwise end immediately
+        endCall();
       };
 
       // 6. Create and set local description (offer)
@@ -515,8 +527,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           // Mark that we're waiting for goodbye audio - prevents dc.onclose from ending early
           waitingForGoodbyeRef.current = true;
           
-          // Wait for audio to finish: ~60ms per char, min 3s, max 8s
-          const playbackEstimateMs = Math.min(8000, Math.max(3000, transcriptLen * 60));
+          // Wait for audio to finish: ~80ms per char, min 5s, max 10s
+          // Increased minimum to ensure goodbye message completes
+          const playbackEstimateMs = Math.min(10000, Math.max(5000, transcriptLen * 80));
           
           setTimeout(() => {
             if (endingCallRef.current) return;
