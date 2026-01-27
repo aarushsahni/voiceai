@@ -23,6 +23,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // If no custom prompt provided, use the default
     if (!instructions || instructions.trim().length === 0) {
       instructions = getDefaultSystemPrompt(patientName);
+    } else {
+      // Replace [patient_name] placeholder in custom prompts
+      if (patientName) {
+        // Replace with actual name
+        instructions = instructions.replace(/\[patient_name\]/gi, patientName);
+      } else {
+        // No name provided - replace "Hi [patient_name]," with "Hello," or just remove the placeholder
+        instructions = instructions.replace(/Hi \[patient_name\],/gi, 'Hello,');
+        instructions = instructions.replace(/\[patient_name\]/gi, '');
+      }
     }
 
     // Temperature from voice5.py: 0.6 for deterministic, 0.9 for explorative

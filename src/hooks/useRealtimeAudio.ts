@@ -73,6 +73,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     'getUserMedia' in navigator.mediaDevices;
 
   const updateStatus = useCallback((newStatus: CallStatus) => {
+    console.log(`[STATUS] Updating status to: ${newStatus}`);
     setStatus(newStatus);
     onStatusChange?.(newStatus);
   }, [onStatusChange]);
@@ -210,6 +211,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       audioElementRef.current = null;
     }
 
+    console.log('[endCall] Setting status to ended');
     updateStatus('ended');
     addTranscript('system', 'Call ended');
   }, [updateStatus, addTranscript]);
@@ -360,7 +362,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       dc.onclose = () => {
         console.log('Data channel closed');
-        if (status !== 'ended') {
+        // Use ref to check if call is already ending (avoid stale closure with status state)
+        if (!endingCallRef.current) {
           endCall();
         }
       };
@@ -538,10 +541,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           
           const startTime = Date.now();
           setTimeout(() => {
-            console.log(`[DEBUG] Goodbye setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
-            if (status === 'assistant_speaking') {
-              updateStatus('connected');
+            // Guard: Don't do anything if call has already ended
+            if (endingCallRef.current) {
+              console.log('[DEBUG] Goodbye setTimeout fired but call already ending, skipping');
+              return;
             }
+            console.log(`[DEBUG] Goodbye setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
             console.log('[goodbye] Audio playback complete, ending call');
             endCall();
           }, playbackEstimateMs);
@@ -555,10 +560,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           
           const startTime = Date.now();
           setTimeout(() => {
-            console.log(`[DEBUG] Normal setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
-            if (status === 'assistant_speaking') {
-              updateStatus('connected');
+            // Guard: Don't update status if call has ended
+            if (endingCallRef.current) {
+              console.log('[DEBUG] Normal setTimeout fired but call ended, skipping status update');
+              return;
             }
+            console.log(`[DEBUG] Normal setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
             assistantSpeakingRef.current = false;
             updateMicMute?.();
             updateStatus('listening');
