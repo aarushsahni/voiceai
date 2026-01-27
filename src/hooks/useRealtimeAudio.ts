@@ -57,6 +57,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const lastAudioDeltaTimeRef = useRef<number>(0);
   const transcriptLengthRef = useRef<number>(0);
   
+  // Track if we're currently in a response (to avoid stale closure issues with status state)
+  const inResponseRef = useRef<boolean>(false);
+  
   // Response delay from voice5.py (RESPONSE_DELAY_SEC = 0.4)
   const RESPONSE_DELAY_MS = 400;
   
@@ -233,6 +236,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       pendingUserTranscriptRef.current = null;
       goodbyeDetectedRef.current = false;
       endingCallRef.current = false;
+      inResponseRef.current = false;
+      transcriptLengthRef.current = 0;
 
       // 1. Get ephemeral token from our API
       const sessionResponse = await fetch('/api/session', {
@@ -451,8 +456,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         // Track when we receive audio deltas to estimate playback
         lastAudioDeltaTimeRef.current = Date.now();
         
-        // Assistant is speaking - first audio chunk
-        if (status !== 'assistant_speaking') {
+        // Assistant is speaking - first audio chunk (use ref to avoid stale closure)
+        if (!inResponseRef.current) {
+          inResponseRef.current = true;
           updateStatus('assistant_speaking');
           transcriptLengthRef.current = 0;  // Reset for new response
           console.log('[DEBUG] New response started, reset transcriptLength to 0');
@@ -505,6 +511,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       case 'response.done': {
         // Response complete - all audio has been SENT (may still be playing)
+        // Reset response tracking so next response can start fresh
+        inResponseRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
         const timeSinceLastDelta = Date.now() - lastAudioDeltaTimeRef.current;

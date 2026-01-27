@@ -120,15 +120,15 @@ THE "script" FIELD FORMAT - Generate step-by-step instructions like this:
 STEP check_symptoms - [Step Label]:
 Ask: "[EXACT QUESTION TO ASK - be specific based on user's prompt]"
 Wait for patient response, then:
-- If they say [positive keywords]: Say "[response]" then go to check_medications
-- If they say [concerning keywords]: Say "I'll make sure the care team knows, someone will call you back soon." then go to check_medications (CALLBACK TRIGGERED but continue flow)
+- If they say [positive keywords]: Say "That's great to hear. [next question]" then go to check_medications
+- If they say [concerning keywords]: Say "I'm sorry to hear that. I'll make sure the care team knows, someone will call you back soon. [next question]" then go to check_medications (CALLBACK TRIGGERED but continue flow)
 - If unclear: Say "I didn't quite catch that." then repeat the question
 
 STEP check_medications - [Step Label]:
 Ask: "[NEXT SPECIFIC QUESTION]"
 Wait for patient response, then:
-- If they say [keywords]: Say "[response]" then go to check_equipment
-- If they need callback: Say "I'll make sure the care team knows, someone will call you back soon." then go to check_equipment (CALLBACK TRIGGERED but continue flow)
+- If they say [positive keywords]: Say "Good to know. [next question]" then go to check_equipment
+- If they need callback: Say "Got it, thank you for letting me know. I'll make sure the care team knows, someone will call you back soon. [next question]" then go to check_equipment (CALLBACK TRIGGERED but continue flow)
 ...
 
 STEP closing - Closing:
@@ -149,23 +149,27 @@ CALLBACK HANDLING - CRITICAL:
 
 IMPORTANT RULES:
 1. The greeting MUST include the first question in the same sentence - do NOT have a standalone greeting. Example: "Hi [patient_name], this is Penn Medicine calling about your recent visit. How are you feeling today?" Use EXACTLY '[patient_name]' as the placeholder. NEVER make up a patient name.
-2. COMBINE RELATED QUESTIONS into single conversational turns where appropriate (e.g., "How are you feeling? Any changes in your breathing or pain?"). But don't ask ALL questions at once.
-3. KEEP QUESTIONS SPECIFIC - preserve specific clinical details from the user's prompt (e.g., "How is your breathing?" not "How are you feeling?")
-4. Use warm, empathetic, human-like language.
-5. CRITICAL: The VERY LAST sentence MUST contain 'goodbye' - this triggers call end detection.
-6. final_phrases MUST include: ['goodbye', 'take care', 'bye']
-7. Each option should include 'keywords' array with multiple ways a human might express that answer.
-8. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant. Options should be descriptive (e.g., "Medication received, no questions" vs "Medication received, has questions" vs "Medication not received").
-9. Preserve clinical meaning. No extra medical advice beyond disclaimer.
-10. CALLBACK HANDLING: When patient needs a callback (concerning symptoms, questions, etc.), say "I'll make sure the care team knows, someone will call you back soon." BUT THEN CONTINUE TO THE NEXT STEP - do NOT skip to closing. ALL steps must still be completed.
-11. Only ask 'Is there anything else I can help you with today?' AFTER completing ALL script steps (this is the "closing" step).
-12. Only proceed to goodbye AFTER patient confirms no more questions.
-13. CRITICAL - EVERY STEP REFERENCED IN "next" MUST EXIST IN THE FLOW:
+2. ALWAYS include acknowledgment statements in each step's response before asking the next question. Examples:
+   - Positive: "That's great to hear.", "I'm glad to hear that.", "Good to know."
+   - Neutral: "Got it, thank you.", "Okay, thanks for letting me know."
+   - Concerning: "I'm sorry to hear that.", "Thank you for sharing that."
+3. COMBINE RELATED QUESTIONS into single conversational turns where appropriate (e.g., "How are you feeling? Any changes in your breathing or pain?"). But don't ask ALL questions at once.
+4. KEEP QUESTIONS SPECIFIC - preserve specific clinical details from the user's prompt (e.g., "How is your breathing?" not "How are you feeling?")
+5. Use warm, empathetic, human-like language.
+6. CRITICAL: The VERY LAST sentence MUST contain 'goodbye' - this triggers call end detection.
+7. final_phrases MUST include: ['goodbye', 'take care', 'bye']
+8. Each option should include 'keywords' array with multiple ways a human might express that answer.
+9. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant. Options should be descriptive (e.g., "Medication received, no questions" vs "Medication received, has questions" vs "Medication not received").
+10. Preserve clinical meaning. No extra medical advice beyond disclaimer.
+11. CALLBACK HANDLING: When patient needs a callback (concerning symptoms, questions, etc.), say "I'll make sure the care team knows, someone will call you back soon." BUT THEN CONTINUE TO THE NEXT STEP - do NOT skip to closing. ALL steps must still be completed.
+12. Only ask 'Is there anything else I can help you with today?' AFTER completing ALL script steps (this is the "closing" step).
+13. Only proceed to goodbye AFTER patient confirms no more questions.
+14. CRITICAL - EVERY STEP REFERENCED IN "next" MUST EXIST IN THE FLOW:
     - ALL steps mentioned in the script must be defined in the flow.steps array
     - The "next" field in options must use exact step IDs that exist in the flow
     - Always include: a "closing" step (anything else?) and an "end_call" step (goodbye)
     - Use snake_case IDs like: "check_symptoms", "check_medications", "closing", "end_call"
-14. CALLBACK OPTIONS - Mark options that trigger callback with "triggers_callback": true in the option object. The "next" field should still point to the NEXT step in the flow (not a separate callback step). Example option: {"label": "Has questions", "keywords": ["question", "help"], "next": "check_equipment", "triggers_callback": true}
+15. CALLBACK OPTIONS - Mark options that trigger callback with "triggers_callback": true in the option object. The "next" field should still point to the NEXT step in the flow (not a separate callback step). Example option: {"label": "Has questions", "keywords": ["question", "help"], "next": "check_equipment", "triggers_callback": true}
 `;
 }
 
