@@ -183,18 +183,11 @@ function App() {
         // Use ref for latest step ID (handles rapid updates)
         const stepId = currentStepIdRef.current;
         if (stepId) {
-          // Try local match first
-          const localMatch = matchUserResponse(entry.text, stepId, activeFlowMap);
-          if (localMatch) {
-            console.log(`[match] Local match found: "${localMatch}" for step ${stepId}`);
-            setMatchedOptions((prev) => new Map([...prev, [stepId, localMatch]]));
-          } else {
-            // Fall back to LLM matching (async, won't block)
-            const step = activeFlowMap.steps.find(s => s.id === stepId);
-            if (step) {
-              console.log(`[match] No local match, trying LLM for step ${stepId}`);
-              matchAnswerWithLLM(step.question, entry.text, stepId, activeFlowMap);
-            }
+          // Use LLM matching for better accuracy (async, won't block conversation)
+          const step = activeFlowMap.steps.find(s => s.id === stepId);
+          if (step) {
+            console.log(`[match] Using LLM to match response for step ${stepId}`);
+            matchAnswerWithLLM(step.question, entry.text, stepId, activeFlowMap);
           }
         }
       }

@@ -507,11 +507,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         const transcriptLen = transcriptLengthRef.current;
         
         // If goodbye was detected, wait for remaining audio buffer to play then end call
-        // By the time response.done fires, most audio has already played - just need to
-        // wait for the tail end of the buffer (typically 1-3 seconds)
         if (goodbyeDetectedRef.current) {
-          // Reduced delay: ~50ms per char, min 1.5s, max 5s
-          const playbackEstimateMs = Math.min(5000, Math.max(1500, transcriptLen * 50));
+          // Wait for audio to finish: ~60ms per char, min 3s, max 8s
+          const playbackEstimateMs = Math.min(8000, Math.max(3000, transcriptLen * 60));
           
           setTimeout(() => {
             if (endingCallRef.current) return;
@@ -519,8 +517,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           }, playbackEstimateMs);
         } else {
           // Wait for remaining audio buffer then unmute mic
-          // Reduced delay: ~45ms per char, min 500ms, max 4s
-          const playbackEstimateMs = Math.min(4000, Math.max(500, transcriptLen * 45));
+          // ~55ms per char, min 1s, max 6s
+          const playbackEstimateMs = Math.min(6000, Math.max(1000, transcriptLen * 55));
           
           setTimeout(() => {
             if (endingCallRef.current) return;
