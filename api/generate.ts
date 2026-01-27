@@ -49,23 +49,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = await response.json();
-    console.log('API response:', JSON.stringify(data, null, 2));
     
-    // Handle different response formats
-    let content = data.output_text || data.output;
-    
-    // If content is an array, get the text from it
-    if (Array.isArray(content)) {
-      content = content.map((item: { text?: string }) => item.text || '').join('');
-    }
-    
-    // If content is an object, try to get text property
-    if (content && typeof content === 'object') {
-      content = content.text || JSON.stringify(content);
+    // Extract content from gpt-5.2 response format: data.output[0].content[0].text
+    let content: string | null = null;
+    if (data.output && Array.isArray(data.output) && data.output[0]) {
+      const message = data.output[0];
+      if (message.content && Array.isArray(message.content) && message.content[0]) {
+        content = message.content[0].text;
+      }
     }
 
     if (!content) {
-      return res.status(500).json({ error: 'No response generated', debug: data });
+      return res.status(500).json({ 
+        error: 'No response generated', 
+        availableFields: Object.keys(data),
+        fullResponse: data 
+      });
     }
 
     // Parse JSON response
