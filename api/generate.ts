@@ -49,10 +49,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = await response.json();
-    const content = data.output_text || data.output;
+    console.log('API response:', JSON.stringify(data, null, 2));
+    
+    // Handle different response formats
+    let content = data.output_text || data.output;
+    
+    // If content is an array, get the text from it
+    if (Array.isArray(content)) {
+      content = content.map((item: { text?: string }) => item.text || '').join('');
+    }
+    
+    // If content is an object, try to get text property
+    if (content && typeof content === 'object') {
+      content = content.text || JSON.stringify(content);
+    }
 
     if (!content) {
-      return res.status(500).json({ error: 'No response generated' });
+      return res.status(500).json({ error: 'No response generated', debug: data });
     }
 
     // Parse JSON response
@@ -61,11 +74,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       parsed = JSON.parse(content);
     } catch {
       // If not valid JSON, try to extract from markdown code block
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[1].trim());
+      if (typeof content === 'string') {
+        const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[1].trim());
+        } else {
+          // Try to find JSON object in the response
+          const jsonStart = content.indexOf('{');
+          const jsonEnd = content.lastIndexOf('}');
+          if (jsonStart !== -1 && jsonEnd !== -1) {
+            parsed = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+          } else {
+            return res.status(500).json({ error: 'Failed to parse response as JSON', content });
+          }
+        }
       } else {
-        return res.status(500).json({ error: 'Failed to parse response as JSON' });
+        return res.status(500).json({ error: 'Unexpected response format', content });
       }
     }
 
