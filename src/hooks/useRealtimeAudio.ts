@@ -510,30 +510,41 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         
         console.log(`[audio] response.done - transcriptLen: ${transcriptLen}, using silence detection (fallback: ${fallbackDelayMs}ms)`);
         
-        // If goodbye was detected, wait for silence then end call
+        // If goodbye was detected, wait for audio playback to finish then end call
+        // IMPORTANT: Don't rely on silence detection here because it monitors the 
+        // incoming WebRTC stream, not the audio element's playback buffer.
+        // When OpenAI finishes sending audio (response.done), the stream goes silent
+        // immediately, but there's still 1-2+ seconds of audio buffered for playback.
         if (goodbyeDetectedRef.current) {
-          console.log('[goodbye] Waiting for audio to finish playing...');
-          waitForAudioSilence(() => {
+          // Use transcript-based delay to estimate playback time remaining
+          // Average speaking rate is ~150 words/min = ~2.5 words/sec = ~12 chars/sec
+          // So ~80-100ms per character is a safe estimate for audio duration
+          const playbackEstimateMs = Math.min(12000, Math.max(2000, transcriptLen * 90));
+          console.log(`[goodbye] Waiting ${playbackEstimateMs}ms for audio playback to finish (transcript: ${transcriptLen} chars)`);
+          
+          setTimeout(() => {
             if (status === 'assistant_speaking') {
               updateStatus('connected');
             }
-            // Small extra buffer after silence detected
-            setTimeout(() => {
-              console.log('[goodbye] Audio finished, ending call');
-              endCall();
-            }, 300);
-          }, fallbackDelayMs);
+            console.log('[goodbye] Audio playback complete, ending call');
+            endCall();
+          }, playbackEstimateMs);
         } else {
-          // NO_BARGE_IN: Wait for audio silence then unmute mic
-          waitForAudioSilence(() => {
+          // NO_BARGE_IN: Wait for audio playback to finish then unmute mic
+          // IMPORTANT: Don't rely solely on silence detection - it monitors the incoming
+          // stream, not the playback buffer. Use transcript-based delay for accuracy.
+          const playbackEstimateMs = Math.min(10000, Math.max(800, transcriptLen * 85));
+          console.log(`[audio] Waiting ${playbackEstimateMs}ms for playback to finish (transcript: ${transcriptLen} chars)`);
+          
+          setTimeout(() => {
             if (status === 'assistant_speaking') {
               updateStatus('connected');
             }
             assistantSpeakingRef.current = false;
             updateMicMute?.();
             updateStatus('listening');
-            console.log('[mic] Audio finished, now listening to patient');
-          }, fallbackDelayMs);
+            console.log('[mic] Audio playback finished, now listening to patient');
+          }, playbackEstimateMs);
         }
         break;
       }
