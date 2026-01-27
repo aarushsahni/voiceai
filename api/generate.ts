@@ -32,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5.2',
+        model: 'gpt-5',
         input: `${systemInstructions}\n\n---\n\n${userMessage}`,
         reasoning: {
           effort: 'low'
@@ -133,20 +133,32 @@ Return ONLY valid JSON with this schema:
 CRITICAL REQUIREMENTS:
 1. EXTRACT ALL TOPICS from the user's prompt and create a SEPARATE STEP for EACH topic. Read the prompt carefully and identify every distinct thing they want to ask about.
 2. PRESERVE ALL SPECIFIC DETAILS from the user's prompt - medication names, equipment names, appointment dates/times, symptom types, etc. Include them verbatim in the questions.
-3. For EACH step, include callback options (e.g., "Has concerns", "Has questions", "Not received") marked with "triggers_callback": true.
-4. After triggering a callback, CONTINUE to the next step - do NOT skip to closing.
+3. CALLBACK HANDLING - Use ONE single callback step for all callback scenarios:
+   - Create ONE step with id "callback" that says: "I'll make sure the care team knows about this, and someone will call you back soon."
+   - Options that need callback should have "triggers_callback": true, "next": "callback", and "return_to": "[next_main_step_id]"
+   - The callback step itself should NOT have a fixed "next" - the runtime will use "return_to" to continue
+4. This ensures callbacks are handled consistently before continuing the flow.
 
 SCRIPT FORMAT EXAMPLE:
 """
-STEP [topic_id] - [Topic Label]:
-Ask: "[Question with SPECIFIC details from user's prompt]"
-- If [positive response]: Acknowledge, then go to [next_step]
-- If [needs callback]: Say callback message, then go to [next_step] (triggers_callback: true)
+STEP symptoms - Check Symptoms:
+Ask: "[Question about symptoms]"
+- If improving: Acknowledge, go to medications
+- If has concerns: Go to callback, return_to medications (triggers_callback: true)
 - If unclear: Repeat question
+
+STEP medications - Check Medications:
+Ask: "[Question about medications]"
+- If no issues: Acknowledge, go to equipment
+- If has questions: Go to callback, return_to equipment (triggers_callback: true)
+
+STEP callback - Callback:
+Say: "I'll make sure the care team knows about this, and someone will call you back soon."
+(Runtime uses return_to from the triggering option to continue)
 
 STEP closing - Closing:
 Ask: "Is there anything else I can help you with today?"
-- If yes: Address concern, ask again
+- If yes: Go to callback, return_to closing (triggers_callback: true)
 - If no: Go to end_call
 
 STEP end_call - End Call:
@@ -159,11 +171,12 @@ FLOW RULES:
 3. Create a step for EVERY topic in the user's prompt - don't combine or skip any
 4. Include specific names/dates/details from the prompt in your questions
 5. Each option needs "next" pointing to an existing step ID
-6. Callback options need "triggers_callback": true AND must continue to next step (not skip to closing)
-7. Always include "closing" and "end_call" steps at the end
-8. The LAST sentence must contain "goodbye"
-9. final_phrases: ["goodbye", "take care", "bye"]
-10. Each option needs a "keywords" array with natural variations
+6. Callback options need: "triggers_callback": true, "next": "callback", "return_to": "[next_main_step_id]"
+7. Include ONE "callback" step that says the callback message (runtime handles continuation via return_to)
+8. Always include "closing" and "end_call" steps at the end
+9. The LAST sentence must contain "goodbye"
+10. final_phrases: ["goodbye", "take care", "bye"]
+11. Each option needs a "keywords" array with natural variations
 `;
 }
 
