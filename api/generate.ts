@@ -25,21 +25,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const systemInstructions = buildConversionInstructions();
     const userMessage = buildUserMessage(script, inputType, mode);
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5',
-        messages: [
-          { role: 'system', content: systemInstructions },
-          { role: 'user', content: userMessage },
-        ],
-        temperature: 0.3,
-        max_tokens: 6000,
-        response_format: { type: 'json_object' },
+        model: 'gpt-5.2',
+        input: `${systemInstructions}\n\n---\n\n${userMessage}`,
+        reasoning: {
+          effort: 'medium'
+        }
       }),
     });
 
@@ -52,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const content = data.output_text || data.output;
 
     if (!content) {
       return res.status(500).json({ error: 'No response generated' });
