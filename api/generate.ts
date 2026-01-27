@@ -135,24 +135,20 @@ Return ONLY valid JSON with this schema:
 CRITICAL REQUIREMENTS:
 1. EXTRACT ALL TOPICS from the user's prompt and create a SEPARATE STEP for EACH topic. Read the prompt carefully and identify every distinct thing they want to ask about.
 2. PRESERVE ALL SPECIFIC DETAILS from the user's prompt - medication names, equipment names, appointment dates/times, symptom types, etc. Include them verbatim in the questions.
-3. CALLBACK HANDLING - Use ONE single callback step for all callback scenarios:
-   - Create ONE step with id "callback" that says: "I'll make sure the care team knows about this, and someone will call you back soon."
-   - Options that need callback should have "triggers_callback": true, "next": "callback", and "return_to": "[next_main_step_id]"
-   - The callback step itself should NOT have a fixed "next" - the runtime will use "return_to" to continue
-4. This ensures callbacks are handled consistently before continuing the flow.
+3. CALLBACK HANDLING - NO separate callback step. Instead:
+   - Options that need callback should have "triggers_callback": true and "next" pointing to the NEXT MAIN STEP
+   - The LLM will say the callback message ("I'll make sure the care team knows, someone will call you back soon") as acknowledgment, then ask the next question
+   - This keeps the flow simple: callback options go to the next step like normal, just with triggers_callback flag
 
 SCRIPT FORMAT EXAMPLE:
 """
 STEP [step_id] - [Step Label]:
 Ask: "[Question with specific details from prompt]"
 - If [positive]: Acknowledge, go to [next_step]
-- If [needs callback]: Go to callback, return_to [next_step] (triggers_callback: true)
+- If [needs callback]: Say callback message, go to [next_step] (triggers_callback: true)
 - If unclear: Repeat question
 
 [... create steps for ALL topics from the user's prompt ...]
-
-STEP callback - Callback:
-Say: "I'll make sure the care team knows about this, and someone will call you back soon."
 
 STEP end_call - End Call:
 Say: "Thank you for your time today. Take care, goodbye!"
@@ -163,17 +159,15 @@ FLOW RULES:
 2. Use [patient_name] placeholder - never make up a name
 3. Create a step for EVERY topic in the user's prompt - don't combine or skip any
 4. Include specific names/dates/details from the prompt in your questions
-5. CRITICAL - VALID STEP REFERENCES: Each option's "next" and "return_to" MUST point to a step ID that EXISTS in the flow. Before finalizing, verify:
+5. CRITICAL - VALID STEP REFERENCES: Each option's "next" MUST point to a step ID that EXISTS in the flow. Before finalizing, verify:
    - Every "next" value matches an existing step "id"
-   - Every "return_to" value matches an existing step "id"
-   - Valid step IDs are: the IDs you define for main steps + "callback" + "end_call"
-   - Do NOT reference step IDs that don't exist
-6. Callback options need: "triggers_callback": true, "next": "callback", "return_to": "[next_main_step_id]"
-7. Include ONE "callback" step that says the callback message (runtime handles continuation via return_to)
-8. The LAST main step should go directly to "end_call" - do NOT include a "closing" step
-9. The LAST sentence must contain "goodbye"
-10. final_phrases: ["goodbye", "take care", "bye"]
-11. Each option needs a "keywords" array with natural variations
+   - Valid step IDs are: the IDs you define for main steps + "end_call"
+   - Do NOT reference step IDs that don't exist (no "callback" step needed)
+6. Callback options need: "triggers_callback": true, and "next" pointing to the NEXT MAIN STEP (not a separate callback step)
+7. The LAST main step should go directly to "end_call"
+8. The LAST sentence must contain "goodbye"
+9. final_phrases: ["goodbye", "take care", "bye"]
+10. Each option needs a "keywords" array with natural variations
 `;
 }
 
