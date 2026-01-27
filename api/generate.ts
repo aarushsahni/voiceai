@@ -122,7 +122,7 @@ Ask: "[EXACT QUESTION TO ASK - be specific based on user's prompt]"
 Wait for patient response, then:
 - If they say [keywords]: Say "[response]" then go to [NEXT_STEP]
 - If they say [other keywords]: Say "[response]" then go to [DIFFERENT_STEP]
-- If concerning symptoms: Say "I'll make sure the care team knows about this, and someone will call you back soon." then go to CALLBACK
+- If concerning symptoms or needs callback: Say "I'll make sure the care team knows about this, and someone will call you back soon." then CONTINUE to [NEXT_STEP] (do NOT skip to closing)
 - If unclear: Say "I didn't quite catch that." then repeat the question
 
 STEP 2 - [STEP_NAME]:
@@ -130,10 +130,6 @@ Ask: "[NEXT SPECIFIC QUESTION]"
 Wait for patient response, then:
 - If they say [keywords]: [Response and next step]
 ...
-
-STEP callback - Callback Needed:
-Say: "I want to make sure you get the help you need. Someone from our care team will call you back soon."
-Then go to closing
 
 STEP closing - Closing:
 Ask: "Is there anything else I can help you with today?"
@@ -154,14 +150,15 @@ IMPORTANT RULES:
 7. Each option should include 'keywords' array with multiple ways a human might express that answer.
 8. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant. Options should be descriptive (e.g., "Medication received, no questions" vs "Medication received, has questions" vs "Medication not received").
 9. Preserve clinical meaning. No extra medical advice beyond disclaimer.
-10. If patient expresses concerning symptoms, say: 'I'll make sure the care team knows, someone will call you back soon.'
-11. BEFORE goodbye, ask 'Is there anything else I can help you with today?'
+10. CRITICAL - CALLBACK FLOW: When patient needs a callback (concerning symptoms, questions, etc.), say "I'll make sure the care team knows, someone will call you back soon." BUT THEN CONTINUE TO THE NEXT STEP - do NOT skip to closing. The callback is just a note, not a flow terminator. ALL steps must still be completed.
+11. Only ask 'Is there anything else I can help you with today?' AFTER completing ALL script steps (this is the "closing" step).
 12. Only proceed to goodbye AFTER patient confirms no more questions.
 13. CRITICAL - EVERY STEP REFERENCED IN "next" MUST EXIST IN THE FLOW:
-    - ALL steps mentioned in the script (CALLBACK, CLOSING, etc.) MUST be defined in the flow.steps array
+    - ALL steps mentioned in the script must be defined in the flow.steps array
     - The "next" field in options must use exact step IDs that exist in the flow
-    - Always include these standard steps: a "callback" step (for concerning issues), a "closing" step (anything else?), and an "end_call" step (goodbye)
-    - Use snake_case IDs like: "check_symptoms", "callback", "closing", "end_call"
+    - Always include: a "closing" step (anything else?), and an "end_call" step (goodbye)
+    - Use snake_case IDs like: "check_symptoms", "check_medications", "closing", "end_call"
+    - Options that trigger callback should still have "next" pointing to the NEXT step in the flow, NOT to closing
 `;
 }
 
