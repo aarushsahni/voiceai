@@ -52,6 +52,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Prevent duplicate endCall invocations
   const endingCallRef = useRef<boolean>(false);
   
+  // Track if we're waiting for goodbye audio to finish (prevents dc.onclose from ending early)
+  const waitingForGoodbyeRef = useRef<boolean>(false);
+  
   // Track last audio delta time to estimate when audio finishes
   const lastAudioDeltaTimeRef = useRef<number>(0);
   const transcriptLengthRef = useRef<number>(0);
@@ -234,6 +237,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       currentAssistantTextRef.current = '';
       goodbyeDetectedRef.current = false;
       endingCallRef.current = false;
+      waitingForGoodbyeRef.current = false;
       inResponseRef.current = false;
       transcriptLengthRef.current = 0;
 
@@ -358,8 +362,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       dc.onclose = () => {
         console.log('Data channel closed');
-        // Use ref to check if call is already ending (avoid stale closure with status state)
-        if (!endingCallRef.current) {
+        // Don't end call if we're waiting for goodbye audio or already ending
+        if (!endingCallRef.current && !waitingForGoodbyeRef.current) {
           endCall();
         }
       };
@@ -508,6 +512,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         
         // If goodbye was detected, wait for remaining audio buffer to play then end call
         if (goodbyeDetectedRef.current) {
+          // Mark that we're waiting for goodbye audio - prevents dc.onclose from ending early
+          waitingForGoodbyeRef.current = true;
+          
           // Wait for audio to finish: ~60ms per char, min 3s, max 8s
           const playbackEstimateMs = Math.min(8000, Math.max(3000, transcriptLen * 60));
           
