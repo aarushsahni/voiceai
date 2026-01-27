@@ -1,4 +1,4 @@
-import { Mic, Volume2, Loader2, CheckCircle, AlertCircle, Phone, PhoneOff } from 'lucide-react';
+import { Loader2, CheckCircle, AlertCircle, Phone } from 'lucide-react';
 import { CallStatus } from '../types';
 
 interface StatusIndicatorProps {
@@ -31,25 +31,22 @@ const statusConfig: Record<CallStatus, {
     textColor: 'text-green-700',
   },
   listening: {
-    icon: <Mic className="w-5 h-5" />,
-    text: 'Listening to patient...',
-    bgColor: 'bg-teal-100',
-    textColor: 'text-teal-700',
-    animate: true,
+    icon: <Phone className="w-5 h-5" />,
+    text: 'Call in progress',
+    bgColor: 'bg-green-100',
+    textColor: 'text-green-700',
   },
   assistant_speaking: {
-    icon: <Volume2 className="w-5 h-5" />,
-    text: 'Assistant Speaking',
-    bgColor: 'bg-blue-100',
-    textColor: 'text-blue-700',
-    animate: true,
+    icon: <Phone className="w-5 h-5" />,
+    text: 'Call in progress',
+    bgColor: 'bg-green-100',
+    textColor: 'text-green-700',
   },
   user_speaking: {
-    icon: <Mic className="w-5 h-5" />,
-    text: 'User Speaking',
-    bgColor: 'bg-emerald-100',
-    textColor: 'text-emerald-700',
-    animate: true,
+    icon: <Phone className="w-5 h-5" />,
+    text: 'Call in progress',
+    bgColor: 'bg-green-100',
+    textColor: 'text-green-700',
   },
   processing: {
     icon: <Loader2 className="w-5 h-5 animate-spin" />,
@@ -86,15 +83,6 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
         <div className={`font-semibold ${config.textColor}`}>
           {config.text}
         </div>
-        {(status === 'assistant_speaking' || status === 'user_speaking' || status === 'listening') && (
-          <div className={`audio-wave mt-1 ${config.textColor}`}>
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        )}
       </div>
     </div>
   );
