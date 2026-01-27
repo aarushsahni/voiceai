@@ -50,12 +50,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const data = await response.json();
     
-    // Extract content from gpt-5.2 response format: data.output[0].content[0].text
+    // Extract content from gpt-5 response format
+    // output array has reasoning block (type: "reasoning") and message block (type: "message")
     let content: string | null = null;
-    if (data.output && Array.isArray(data.output) && data.output[0]) {
-      const message = data.output[0];
-      if (message.content && Array.isArray(message.content) && message.content[0]) {
-        content = message.content[0].text;
+    if (data.output && Array.isArray(data.output)) {
+      // Find the message block (not the reasoning block)
+      const messageBlock = data.output.find((item: { type: string }) => item.type === 'message');
+      if (messageBlock?.content && Array.isArray(messageBlock.content) && messageBlock.content[0]) {
+        content = messageBlock.content[0].text;
       }
     }
 
