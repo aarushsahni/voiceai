@@ -455,6 +455,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         if (status !== 'assistant_speaking') {
           updateStatus('assistant_speaking');
           transcriptLengthRef.current = 0;  // Reset for new response
+          console.log('[DEBUG] New response started, reset transcriptLength to 0');
           
           // Calculate latency
           if (speechStoppedTimeRef.current) {
@@ -480,12 +481,14 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         const delta = (data.delta as string) || '';
         currentAssistantTextRef.current += delta;
         transcriptLengthRef.current += delta.length;
+        console.log(`[DEBUG] Delta received: "${delta.substring(0, 30)}..." len=${delta.length}, total=${transcriptLengthRef.current}`);
         break;
       }
 
       case 'response.audio_transcript.done': {
         // Full assistant transcript available
         const transcript = (data.transcript as string) || currentAssistantTextRef.current;
+        console.log(`[DEBUG] response.audio_transcript.done - transcript length: ${transcript?.length}, transcriptLengthRef: ${transcriptLengthRef.current}`);
         if (transcript) {
           addTranscript('assistant', transcript);
           
@@ -502,13 +505,15 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       case 'response.done': {
         // Response complete - all audio has been SENT (may still be playing)
-        // Use Web Audio API to detect when audio actually stops, with fallback to estimation
         
         const transcriptLen = transcriptLengthRef.current;
-        // Fallback estimate: 70ms per character
-        const fallbackDelayMs = Math.min(10000, Math.max(1000, transcriptLen * 70));
+        const timeSinceLastDelta = Date.now() - lastAudioDeltaTimeRef.current;
         
-        console.log(`[audio] response.done - transcriptLen: ${transcriptLen}, using silence detection (fallback: ${fallbackDelayMs}ms)`);
+        console.log(`[DEBUG] ========== response.done ==========`);
+        console.log(`[DEBUG] transcriptLengthRef.current: ${transcriptLen}`);
+        console.log(`[DEBUG] timeSinceLastDelta: ${timeSinceLastDelta}ms`);
+        console.log(`[DEBUG] goodbyeDetected: ${goodbyeDetectedRef.current}`);
+        console.log(`[DEBUG] current status: ${status}`);
         
         // If goodbye was detected, wait for audio playback to finish then end call
         // IMPORTANT: Don't rely on silence detection here because it monitors the 
@@ -520,9 +525,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           // Average speaking rate is ~150 words/min = ~2.5 words/sec = ~12 chars/sec
           // So ~80-100ms per character is a safe estimate for audio duration
           const playbackEstimateMs = Math.min(12000, Math.max(2000, transcriptLen * 90));
+          console.log(`[DEBUG] GOODBYE PATH: transcriptLen=${transcriptLen}, playbackEstimateMs=${playbackEstimateMs}`);
           console.log(`[goodbye] Waiting ${playbackEstimateMs}ms for audio playback to finish (transcript: ${transcriptLen} chars)`);
           
+          const startTime = Date.now();
           setTimeout(() => {
+            console.log(`[DEBUG] Goodbye setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
             if (status === 'assistant_speaking') {
               updateStatus('connected');
             }
@@ -534,9 +542,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           // IMPORTANT: Don't rely solely on silence detection - it monitors the incoming
           // stream, not the playback buffer. Use transcript-based delay for accuracy.
           const playbackEstimateMs = Math.min(10000, Math.max(800, transcriptLen * 85));
+          console.log(`[DEBUG] NORMAL PATH: transcriptLen=${transcriptLen}, playbackEstimateMs=${playbackEstimateMs}`);
           console.log(`[audio] Waiting ${playbackEstimateMs}ms for playback to finish (transcript: ${transcriptLen} chars)`);
           
+          const startTime = Date.now();
           setTimeout(() => {
+            console.log(`[DEBUG] Normal setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
             if (status === 'assistant_speaking') {
               updateStatus('connected');
             }
