@@ -148,7 +148,7 @@ CALLBACK HANDLING - CRITICAL:
 - For the flow.steps array, mark callback options with a "triggers_callback": true property if needed for tracking
 
 IMPORTANT RULES:
-1. ALWAYS start greeting with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
+1. The greeting MUST include the first question in the same sentence - do NOT have a standalone greeting. Example: "Hi [patient_name], this is Penn Medicine calling about your recent visit. How are you feeling today?" Use EXACTLY '[patient_name]' as the placeholder. NEVER make up a patient name.
 2. COMBINE RELATED QUESTIONS into single conversational turns where appropriate (e.g., "How are you feeling? Any changes in your breathing or pain?"). But don't ask ALL questions at once.
 3. KEEP QUESTIONS SPECIFIC - preserve specific clinical details from the user's prompt (e.g., "How is your breathing?" not "How are you feeling?")
 4. Use warm, empathetic, human-like language.
