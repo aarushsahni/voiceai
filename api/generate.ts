@@ -163,7 +163,11 @@ FLOW RULES:
 2. Use [patient_name] placeholder - never make up a name
 3. Create a step for EVERY topic in the user's prompt - don't combine or skip any
 4. Include specific names/dates/details from the prompt in your questions
-5. Each option needs "next" pointing to an existing step ID
+5. CRITICAL - VALID STEP REFERENCES: Each option's "next" and "return_to" MUST point to a step ID that EXISTS in the flow. Before finalizing, verify:
+   - Every "next" value matches an existing step "id"
+   - Every "return_to" value matches an existing step "id"
+   - Valid step IDs are: the IDs you define for main steps + "callback" + "end_call"
+   - Do NOT reference step IDs that don't exist
 6. Callback options need: "triggers_callback": true, "next": "callback", "return_to": "[next_main_step_id]"
 7. Include ONE "callback" step that says the callback message (runtime handles continuation via return_to)
 8. The LAST main step should go directly to "end_call" - do NOT include a "closing" step
