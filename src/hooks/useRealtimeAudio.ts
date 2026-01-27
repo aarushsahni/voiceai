@@ -41,7 +41,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   
   // Transcript accumulation
   const currentAssistantTextRef = useRef<string>('');
-  const pendingUserTranscriptRef = useRef<string | null>(null);
   
   // NO_BARGE_IN: Track assistant speaking state for mic muting
   const assistantSpeakingRef = useRef<boolean>(false);
@@ -73,7 +72,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     'getUserMedia' in navigator.mediaDevices;
 
   const updateStatus = useCallback((newStatus: CallStatus) => {
-    console.log(`[STATUS] Updating status to: ${newStatus}`);
     setStatus(newStatus);
     onStatusChange?.(newStatus);
   }, [onStatusChange]);
@@ -211,7 +209,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       audioElementRef.current = null;
     }
 
-    console.log('[endCall] Setting status to ended');
     updateStatus('ended');
     addTranscript('system', 'Call ended');
   }, [updateStatus, addTranscript]);
@@ -235,7 +232,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       latenciesRef.current = [];
       setLatency({ lastTurnMs: null, avgMs: null, turnCount: 0 });
       currentAssistantTextRef.current = '';
-      pendingUserTranscriptRef.current = null;
       goodbyeDetectedRef.current = false;
       endingCallRef.current = false;
       inResponseRef.current = false;
@@ -464,7 +460,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           inResponseRef.current = true;
           updateStatus('assistant_speaking');
           transcriptLengthRef.current = 0;  // Reset for new response
-          console.log('[DEBUG] New response started, reset transcriptLength to 0');
           
           // Calculate latency
           if (speechStoppedTimeRef.current) {
@@ -478,26 +473,18 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             });
             speechStoppedTimeRef.current = null;
           }
-          
-          // Add pending user transcript first
-          if (pendingUserTranscriptRef.current) {
-            addTranscript('user', pendingUserTranscriptRef.current);
-            pendingUserTranscriptRef.current = null;
-          }
         }
         
         // Accumulate transcript and track length
         const delta = (data.delta as string) || '';
         currentAssistantTextRef.current += delta;
         transcriptLengthRef.current += delta.length;
-        console.log(`[DEBUG] Delta received: "${delta.substring(0, 30)}..." len=${delta.length}, total=${transcriptLengthRef.current}`);
         break;
       }
 
       case 'response.audio_transcript.done': {
         // Full assistant transcript available
         const transcript = (data.transcript as string) || currentAssistantTextRef.current;
-        console.log(`[DEBUG] response.audio_transcript.done - transcript length: ${transcript?.length}, transcriptLengthRef: ${transcriptLengthRef.current}`);
         if (transcript) {
           addTranscript('assistant', transcript);
           
@@ -518,69 +505,38 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         inResponseRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
-        const timeSinceLastDelta = Date.now() - lastAudioDeltaTimeRef.current;
         
-        console.log(`[DEBUG] ========== response.done ==========`);
-        console.log(`[DEBUG] transcriptLengthRef.current: ${transcriptLen}`);
-        console.log(`[DEBUG] timeSinceLastDelta: ${timeSinceLastDelta}ms`);
-        console.log(`[DEBUG] goodbyeDetected: ${goodbyeDetectedRef.current}`);
-        console.log(`[DEBUG] current status: ${status}`);
-        
-        // If goodbye was detected, wait for audio playback to finish then end call
-        // IMPORTANT: Don't rely on silence detection here because it monitors the 
-        // incoming WebRTC stream, not the audio element's playback buffer.
-        // When OpenAI finishes sending audio (response.done), the stream goes silent
-        // immediately, but there's still 1-2+ seconds of audio buffered for playback.
+        // If goodbye was detected, wait for remaining audio buffer to play then end call
+        // By the time response.done fires, most audio has already played - just need to
+        // wait for the tail end of the buffer (typically 1-3 seconds)
         if (goodbyeDetectedRef.current) {
-          // Use transcript-based delay to estimate playback time remaining
-          // Average speaking rate is ~150 words/min = ~2.5 words/sec = ~12 chars/sec
-          // So ~80-100ms per character is a safe estimate for audio duration
-          const playbackEstimateMs = Math.min(12000, Math.max(2000, transcriptLen * 90));
-          console.log(`[DEBUG] GOODBYE PATH: transcriptLen=${transcriptLen}, playbackEstimateMs=${playbackEstimateMs}`);
-          console.log(`[goodbye] Waiting ${playbackEstimateMs}ms for audio playback to finish (transcript: ${transcriptLen} chars)`);
+          // Reduced delay: ~50ms per char, min 1.5s, max 5s
+          const playbackEstimateMs = Math.min(5000, Math.max(1500, transcriptLen * 50));
           
-          const startTime = Date.now();
           setTimeout(() => {
-            // Guard: Don't do anything if call has already ended
-            if (endingCallRef.current) {
-              console.log('[DEBUG] Goodbye setTimeout fired but call already ending, skipping');
-              return;
-            }
-            console.log(`[DEBUG] Goodbye setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
-            console.log('[goodbye] Audio playback complete, ending call');
+            if (endingCallRef.current) return;
             endCall();
           }, playbackEstimateMs);
         } else {
-          // NO_BARGE_IN: Wait for audio playback to finish then unmute mic
-          // IMPORTANT: Don't rely solely on silence detection - it monitors the incoming
-          // stream, not the playback buffer. Use transcript-based delay for accuracy.
-          const playbackEstimateMs = Math.min(10000, Math.max(800, transcriptLen * 85));
-          console.log(`[DEBUG] NORMAL PATH: transcriptLen=${transcriptLen}, playbackEstimateMs=${playbackEstimateMs}`);
-          console.log(`[audio] Waiting ${playbackEstimateMs}ms for playback to finish (transcript: ${transcriptLen} chars)`);
+          // Wait for remaining audio buffer then unmute mic
+          // Reduced delay: ~45ms per char, min 500ms, max 4s
+          const playbackEstimateMs = Math.min(4000, Math.max(500, transcriptLen * 45));
           
-          const startTime = Date.now();
           setTimeout(() => {
-            // Guard: Don't update status if call has ended
-            if (endingCallRef.current) {
-              console.log('[DEBUG] Normal setTimeout fired but call ended, skipping status update');
-              return;
-            }
-            console.log(`[DEBUG] Normal setTimeout fired after ${Date.now() - startTime}ms (expected: ${playbackEstimateMs}ms)`);
+            if (endingCallRef.current) return;
             assistantSpeakingRef.current = false;
             updateMicMute?.();
             updateStatus('listening');
-            console.log('[mic] Audio playback finished, now listening to patient');
           }, playbackEstimateMs);
         }
         break;
       }
 
       case 'conversation.item.input_audio_transcription.completed': {
-        // User speech transcribed
+        // User speech transcribed - display immediately
         const transcript = (data.transcript as string) || '';
         if (transcript) {
-          // Store for display when assistant starts responding
-          pendingUserTranscriptRef.current = transcript;
+          addTranscript('user', transcript);
         }
         break;
       }
