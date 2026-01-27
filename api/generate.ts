@@ -150,6 +150,11 @@ Ask: "[Question with specific details from prompt]"
 
 [... create steps for ALL topics from the user's prompt ...]
 
+STEP closing - Closing:
+Ask: "Is there anything else I can help you with today?"
+- If yes: Say callback message, go to closing (triggers_callback: true)
+- If no: Go to end_call
+
 STEP end_call - End Call:
 Say: "Thank you for your time today. Take care, goodbye!"
 """
@@ -159,15 +164,21 @@ FLOW RULES:
 2. Use [patient_name] placeholder - never make up a name
 3. Create a step for EVERY topic in the user's prompt - don't combine or skip any
 4. Include specific names/dates/details from the prompt in your questions
-5. CRITICAL - VALID STEP REFERENCES: Each option's "next" MUST point to a step ID that EXISTS in the flow. Before finalizing, verify:
+5. STEP ID MUST MATCH STEP LABEL: The step "id" should be a snake_case version of the step "label". Examples:
+   - Label: "Blood Pressure Check" → id: "blood_pressure_check"
+   - Label: "Diet and Exercise" → id: "diet_and_exercise"
+   - Label: "Medication Review" → id: "medication_review"
+   This ensures options like "→ diet_and_exercise" clearly match the step "Diet and Exercise"
+6. CRITICAL - VALID STEP REFERENCES: Each option's "next" MUST point to a step ID that EXISTS in the flow. Before finalizing, verify:
    - Every "next" value matches an existing step "id"
-   - Valid step IDs are: the IDs you define for main steps + "end_call"
-   - Do NOT reference step IDs that don't exist (no "callback" step needed)
-6. Callback options need: "triggers_callback": true, and "next" pointing to the NEXT MAIN STEP (not a separate callback step)
-7. The LAST main step should go directly to "end_call"
-8. The LAST sentence must contain "goodbye"
-9. final_phrases: ["goodbye", "take care", "bye"]
-10. Each option needs a "keywords" array with natural variations
+   - Valid step IDs are: the IDs you define for main steps + "closing" + "end_call"
+   - Do NOT reference step IDs that don't exist
+7. Callback options need: "triggers_callback": true, and "next" pointing to the NEXT MAIN STEP
+8. ALWAYS include a "closing" step after all main steps: "Is there anything else I can help you with today?"
+9. The LAST main step should go to "closing", and "closing" goes to "end_call"
+10. The LAST sentence must contain "goodbye"
+11. final_phrases: ["goodbye", "take care", "bye"]
+12. Each option needs a "keywords" array with natural variations
 `;
 }
 
