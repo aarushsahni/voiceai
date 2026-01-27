@@ -80,7 +80,14 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         if (data.match) {
-          setMatchedOptions(prev => new Map([...prev, [stepId, data.match]]));
+          // Only set match if we don't already have one for this step (avoid overwrites)
+          setMatchedOptions(prev => {
+            if (prev.has(stepId)) {
+              console.log(`[match] Skipping overwrite for step ${stepId}, already matched`);
+              return prev;
+            }
+            return new Map([...prev, [stepId, data.match]]);
+          });
         }
       }
     } catch (err) {
