@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         model: 'gpt-5.2',
         input: `${systemInstructions}\n\n---\n\n${userMessage}`,
         reasoning: {
-          effort: 'medium'
+          effort: 'low'
         }
       }),
     });
