@@ -117,18 +117,18 @@ Warm, helpful, quick-talking; conversationally human but never claim to be human
 THE "script" FIELD FORMAT - Generate step-by-step instructions like this:
 
 """
-STEP 1 - [STEP_NAME]:
+STEP check_symptoms - [Step Label]:
 Ask: "[EXACT QUESTION TO ASK - be specific based on user's prompt]"
 Wait for patient response, then:
-- If they say [keywords]: Say "[response]" then go to [NEXT_STEP]
-- If they say [other keywords]: Say "[response]" then go to [DIFFERENT_STEP]
-- If concerning symptoms or needs callback: Say "I'll make sure the care team knows about this, and someone will call you back soon." then CONTINUE to [NEXT_STEP] (do NOT skip to closing)
+- If they say [positive keywords]: Say "[response]" then go to check_medications
+- If they say [concerning keywords]: Say "I'll make sure the care team knows, someone will call you back soon." then go to check_medications (CALLBACK TRIGGERED but continue flow)
 - If unclear: Say "I didn't quite catch that." then repeat the question
 
-STEP 2 - [STEP_NAME]:
+STEP check_medications - [Step Label]:
 Ask: "[NEXT SPECIFIC QUESTION]"
 Wait for patient response, then:
-- If they say [keywords]: [Response and next step]
+- If they say [keywords]: Say "[response]" then go to check_equipment
+- If they need callback: Say "I'll make sure the care team knows, someone will call you back soon." then go to check_equipment (CALLBACK TRIGGERED but continue flow)
 ...
 
 STEP closing - Closing:
@@ -140,6 +140,13 @@ STEP end_call - End Call:
 Say: "Thank you for your time today. Take care, goodbye!"
 """
 
+CALLBACK HANDLING - CRITICAL:
+- When a patient needs a callback (concerning symptoms, questions, etc.), say the callback message BUT THEN CONTINUE to the NEXT step
+- The "next" field for callback options should point to the next step in the flow, NOT to a separate callback step
+- Example: In check_medications, if patient has questions, say callback message then go to check_equipment
+- This ensures ALL steps are completed even when callbacks are triggered
+- For the flow.steps array, mark callback options with a "triggers_callback": true property if needed for tracking
+
 IMPORTANT RULES:
 1. ALWAYS start greeting with 'Hi [patient_name], this is Penn Medicine calling...' - use EXACTLY '[patient_name]' as the placeholder (it will be replaced with the actual name). NEVER make up a patient name.
 2. COMBINE RELATED QUESTIONS into single conversational turns where appropriate (e.g., "How are you feeling? Any changes in your breathing or pain?"). But don't ask ALL questions at once.
@@ -150,15 +157,15 @@ IMPORTANT RULES:
 7. Each option should include 'keywords' array with multiple ways a human might express that answer.
 8. CREATE GRANULAR OPTIONS FOR BETTER TRIAGE - Generate 3-6 specific options per question where appropriate to capture meaningful clinical distinctions. Include a "concerning/needs callback" option when relevant. Options should be descriptive (e.g., "Medication received, no questions" vs "Medication received, has questions" vs "Medication not received").
 9. Preserve clinical meaning. No extra medical advice beyond disclaimer.
-10. CRITICAL - CALLBACK FLOW: When patient needs a callback (concerning symptoms, questions, etc.), say "I'll make sure the care team knows, someone will call you back soon." BUT THEN CONTINUE TO THE NEXT STEP - do NOT skip to closing. The callback is just a note, not a flow terminator. ALL steps must still be completed.
+10. CALLBACK HANDLING: When patient needs a callback (concerning symptoms, questions, etc.), say "I'll make sure the care team knows, someone will call you back soon." BUT THEN CONTINUE TO THE NEXT STEP - do NOT skip to closing. ALL steps must still be completed.
 11. Only ask 'Is there anything else I can help you with today?' AFTER completing ALL script steps (this is the "closing" step).
 12. Only proceed to goodbye AFTER patient confirms no more questions.
 13. CRITICAL - EVERY STEP REFERENCED IN "next" MUST EXIST IN THE FLOW:
     - ALL steps mentioned in the script must be defined in the flow.steps array
     - The "next" field in options must use exact step IDs that exist in the flow
-    - Always include: a "closing" step (anything else?), and an "end_call" step (goodbye)
+    - Always include: a "closing" step (anything else?) and an "end_call" step (goodbye)
     - Use snake_case IDs like: "check_symptoms", "check_medications", "closing", "end_call"
-    - Options that trigger callback should still have "next" pointing to the NEXT step in the flow, NOT to closing
+14. CALLBACK OPTIONS - Mark options that trigger callback with "triggers_callback": true in the option object. The "next" field should still point to the NEXT step in the flow (not a separate callback step). Example option: {"label": "Has questions", "keywords": ["question", "help"], "next": "check_equipment", "triggers_callback": true}
 `;
 }
 
