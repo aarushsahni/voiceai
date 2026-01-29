@@ -4,6 +4,7 @@ import { FlowMap as FlowMapType } from '../types';
 
 export type ScriptMode = 'deterministic';
 export type InputType = 'script' | 'prompt';
+export type ConversionMode = 'single' | 'multi-step';  // single = one LLM call, multi-step = parse→flow→adapt→assemble
 
 export interface ScriptSettings {
   mode: ScriptMode;
@@ -15,6 +16,7 @@ export interface ScriptSettings {
   voice: string;
   variables: string[];                    // List of variable names from generated script (e.g., ["street_address", "practice_number"])
   variableValues: Record<string, string>; // User-filled values for each variable
+  conversionMode: ConversionMode;         // 'single' = one LLM call, 'multi-step' = parse→flow→adapt→assemble
 }
 
 interface GenerateResult {
@@ -42,7 +44,7 @@ interface ScriptConfigProps {
   settings: ScriptSettings;
   onSettingsChange: (settings: ScriptSettings) => void;
   disabled?: boolean;
-  onGenerate?: (script: string, inputType: InputType, mode: ScriptMode) => Promise<GenerateResult | null>;
+  onGenerate?: (script: string, inputType: InputType, mode: ScriptMode, conversionMode?: ConversionMode) => Promise<GenerateResult | null>;
   isGenerating?: boolean;
   flowMap?: FlowMapType | null;  // Current flow map for saving
   onLoadFlowMap?: (flowMap: FlowMapType | null) => void;  // Callback to load flow map
@@ -197,7 +199,7 @@ export function ScriptConfig({
   const handleGenerate = async () => {
     if (!onGenerate || !settings.customScript.trim()) return;
     
-    const result = await onGenerate(settings.customScript, settings.inputType, settings.mode);
+    const result = await onGenerate(settings.customScript, settings.inputType, settings.mode, settings.conversionMode);
     if (result) {
       onSettingsChange({ 
         ...settings, 
@@ -367,6 +369,52 @@ export function ScriptConfig({
                   </label>
                 </div>
               </div>
+
+              {/* Conversion Mode (only for SMS scripts) */}
+              {settings.inputType === 'script' && (
+                <div className="mb-3 p-3 bg-white rounded-lg border border-slate-200">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    Conversion Method
+                  </label>
+                  <div className="flex gap-3">
+                    <label className={`flex-1 flex flex-col gap-1 px-3 py-2 rounded border cursor-pointer text-sm ${
+                      settings.conversionMode === 'single'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="conversionMode"
+                        value="single"
+                        checked={settings.conversionMode === 'single'}
+                        onChange={() => onSettingsChange({ ...settings, conversionMode: 'single' })}
+                        disabled={disabled}
+                        className="sr-only"
+                      />
+                      <span className="font-medium">Single Prompt</span>
+                      <span className="text-xs opacity-70">One LLM call (faster, less control)</span>
+                    </label>
+                    
+                    <label className={`flex-1 flex flex-col gap-1 px-3 py-2 rounded border cursor-pointer text-sm ${
+                      settings.conversionMode === 'multi-step'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}>
+                      <input
+                        type="radio"
+                        name="conversionMode"
+                        value="multi-step"
+                        checked={settings.conversionMode === 'multi-step'}
+                        onChange={() => onSettingsChange({ ...settings, conversionMode: 'multi-step' })}
+                        disabled={disabled}
+                        className="sr-only"
+                      />
+                      <span className="font-medium">Multi-Step</span>
+                      <span className="text-xs opacity-70">Parse→Flow→Adapt (more reliable)</span>
+                    </label>
+                  </div>
+                </div>
+              )}
 
               {/* Text Input */}
               <div>

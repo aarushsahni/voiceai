@@ -16,12 +16,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { script, inputType, mode } = req.body || {};
+    const { script, inputType, mode, conversionMode = 'single' } = req.body || {};
 
     if (!script || typeof script !== 'string') {
       return res.status(400).json({ error: 'Script text is required' });
     }
 
+    // Route to appropriate conversion method
+    if (conversionMode === 'multi-step' && inputType === 'script') {
+      return await handleMultiStepConversion(req, res, apiKey);
+    }
+
+    // Single-prompt conversion (existing method)
     const systemInstructions = buildConversionInstructions();
     const userMessage = buildUserMessage(script, inputType, mode);
 
@@ -107,6 +113,256 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: error instanceof Error ? error.message : 'Failed to generate script',
     });
   }
+}
+
+// Multi-step conversion handler
+async function handleMultiStepConversion(req: VercelRequest, res: VercelResponse, apiKey: string) {
+  const { script } = req.body;
+
+  try {
+    console.log('[multi-step] Starting multi-step conversion...');
+    
+    // Step 1: Parse SMS JSON to extract structured elements
+    const parsedElements = parseSmsJson(script);
+    console.log(`[multi-step] Step 1: Parsed ${parsedElements.length} elements`);
+    
+    // Step 2: Build flow map using LLM (understands complex visibleIf logic)
+    const flowMap = await buildFlowWithLLM(parsedElements, apiKey);
+    console.log(`[multi-step] Step 2: Built flow with ${flowMap.steps.length} steps`);
+    
+    // Step 3: Adapt text for voice using LLM (preserves original wording)
+    const adaptedTexts = await adaptTextWithLLM(parsedElements, apiKey);
+    console.log(`[multi-step] Step 3: Adapted ${Object.keys(adaptedTexts).length} texts`);
+    
+    // Step 4: Assemble final result
+    const result = assembleResult(flowMap, adaptedTexts, parsedElements);
+    console.log('[multi-step] Step 4: Assembled final result');
+    
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('[multi-step] Error:', error);
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : 'Multi-step conversion failed',
+    });
+  }
+}
+
+// Step 1: Parse SMS JSON into structured elements
+function parseSmsJson(script: string): Array<{
+  id: string;
+  type: 'radiogroup' | 'html' | 'text';
+  name: string;
+  title?: string;
+  html?: string;
+  choices?: Array<{ value: string; text: string }>;
+  visibleIf?: string;
+}> {
+  try {
+    const json = JSON.parse(script);
+    const elements = json.pages?.[0]?.elements || [];
+    
+    return elements.map((el: any) => ({
+      id: el.name,
+      type: el.type,
+      name: el.name,
+      title: el.title,
+      html: el.html,
+      choices: el.choices,
+      visibleIf: el.visibleIf,
+    }));
+  } catch (error) {
+    throw new Error('Failed to parse SMS JSON: ' + (error instanceof Error ? error.message : ''));
+  }
+}
+
+// Step 2: Build flow map using LLM
+async function buildFlowWithLLM(elements: any[], apiKey: string): Promise<any> {
+  const prompt = `You are a flow map builder. Given SMS survey elements, create a flow map showing how they connect.
+
+ELEMENTS:
+${elements.map((el, idx) => `
+Element ${idx + 1}: ${el.name} (${el.type})
+${el.title ? `Title: "${el.title}"` : ''}
+${el.html ? `HTML: "${el.html}"` : ''}
+${el.choices ? `Choices: ${el.choices.map((c: any) => c.text).join(', ')}` : ''}
+${el.visibleIf ? `Visible if: ${el.visibleIf}` : 'Entry point (no condition)'}
+`).join('\n')}
+
+TASK: Create a flow map JSON showing:
+1. Parse visibleIf conditions (e.g., "{Info}=1" means shown when Info was option 1)
+2. Map which options lead to which next steps
+3. Identify entry points (no visibleIf) and terminals (no outgoing links)
+
+Return ONLY valid JSON:
+{
+  "title": "Flow name",
+  "steps": [
+    {
+      "id": "step_id (snake_case of element name)",
+      "label": "Human readable label",
+      "type": "question",
+      "question": "Temporary placeholder text",
+      "info": "",
+      "options": [
+        {"label": "Option text", "keywords": ["yes", "yeah"], "next": "next_step_id or end_call"}
+      ]
+    }
+  ]
+}
+
+CRITICAL: 
+- Ensure all "next" values point to valid step IDs or "end_call"
+- Terminal steps (no outgoing visibleIf) should have options pointing to "end_call"
+- Entry points come first in the flow`;
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.2',
+      input: prompt,
+      reasoning: { effort: 'medium' }
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Flow building failed');
+  }
+
+  const data = await response.json();
+  const messageBlock = data.output?.find((item: any) => item.type === 'message');
+  const content = messageBlock?.content?.[0]?.text;
+  
+  if (!content) {
+    throw new Error('No flow map generated');
+  }
+
+  // Parse JSON from response
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('No valid JSON in flow map response');
+  }
+
+  return JSON.parse(jsonMatch[0]);
+}
+
+// Step 3: Adapt text for voice using LLM
+async function adaptTextWithLLM(elements: any[], apiKey: string): Promise<Record<string, string>> {
+  const textsToAdapt = elements.map((el, idx) => `
+${idx + 1}. ${el.name}:
+Type: ${el.type}
+${el.title ? `Text: "${el.title}"` : ''}
+${el.html ? `Text: "${el.html}"` : ''}
+${el.choices ? `Options: ${el.choices.map((c: any) => c.text).join(', ')}` : ''}`).join('\n');
+
+  const prompt = `You adapt SMS text for voice calls. Keep original wording, just make minimal changes for voice.
+
+TEXTS TO ADAPT:
+${textsToAdapt}
+
+RULES:
+1. PRESERVE ORIGINAL WORDING - Keep text almost identical, just:
+   - Remove URLs
+   - Remove "Text 1 for X" instructions
+   - Replace "text MAIL" with "say mail"
+2. NO NUMBERS - Convert to natural language:
+   - Binary: "Would you like X, or are you not interested?"
+   - Multiple: "You can say: [option A], [option B], or [option C]"
+3. NATURAL CONVERSATION - Make it feel like a real conversation:
+   - After patient responds, acknowledge: "Got it.", "I understand.", "Thank you."
+   - Before asking next question, transition smoothly
+   - Use warm, human language
+4. For each choice list, read options naturally in conversational way
+5. IMPORTANT: Every question should naturally include an acknowledgment space for the previous response (except the first question)
+
+Return ONLY valid JSON mapping element names to adapted text:
+{
+  "element_name_1": "Adapted text for voice...",
+  "element_name_2": "Adapted text for voice...",
+  ...
+}`;
+
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.2',
+      input: prompt,
+      reasoning: { effort: 'low' }
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Text adaptation failed');
+  }
+
+  const data = await response.json();
+  const messageBlock = data.output?.find((item: any) => item.type === 'message');
+  const content = messageBlock?.content?.[0]?.text;
+  
+  if (!content) {
+    throw new Error('No adapted texts generated');
+  }
+
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('No valid JSON in adapted texts response');
+  }
+
+  return JSON.parse(jsonMatch[0]);
+}
+
+// Step 4: Assemble final result
+function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elements: any[]): any {
+  // Update flow map steps with adapted text
+  const updatedSteps = flowMap.steps.map((step: any) => {
+    const adaptedText = adaptedTexts[step.id];
+    return {
+      ...step,
+      question: adaptedText || step.question,
+    };
+  });
+
+  // Extract variables from adapted texts
+  const variables = new Set<string>();
+  Object.values(adaptedTexts).forEach(text => {
+    const matches = text.match(/\[([a-z_]+)\]/g);
+    if (matches) {
+      matches.forEach(match => {
+        const varName = match.slice(1, -1);
+        if (varName !== 'patient_name') {
+          variables.add(varName);
+        }
+      });
+    }
+  });
+
+  // Detect greeting (first element's adapted text if it's an entry point)
+  const firstElement = elements.find(el => !el.visibleIf);
+  const greeting = firstElement ? adaptedTexts[firstElement.name] || 'Hello from Penn Medicine.' : 'Hello from Penn Medicine.';
+
+  // Build script content
+  const scriptContent = updatedSteps.map((step: any) => {
+    const optionsText = step.options.map((opt: any) => 
+      `- If ${opt.label}: go to ${opt.next}${opt.triggers_callback ? ' (callback)' : ''}`
+    ).join('\n');
+    
+    return `STEP ${step.id} - ${step.label}:\n${step.question}\n${optionsText}\n`;
+  }).join('\n');
+
+  return {
+    greeting,
+    scriptContent,
+    finalPhrases: ['goodbye', 'bye', 'take care'],
+    flowMap: { ...flowMap, steps: updatedSteps },
+    variables: Array.from(variables),
+  };
 }
 
 function buildConversionInstructions(): string {

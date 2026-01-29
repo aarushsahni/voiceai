@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: 'gpt-5',
         messages: [
           {
             role: 'system',
@@ -41,15 +41,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 Return ONLY a JSON object with: {"match": <option_number or 0 if no match>, "confidence": <0.0-1.0>}
 
 CRITICAL MATCHING RULES:
-1. PAY CLOSE ATTENTION TO NEGATIONS - "no questions", "don't have", "not received" are OPPOSITE of "has questions", "do have", "received"
-2. Match the COMPLETE meaning, not just keywords
-3. "I got them but I don't have any questions" = received + NO questions (not "has questions")
-4. "I didn't get them" = NOT received
-5. "I'm fine" or "doing well" = positive/good outcome
-6. "I'm having problems" or "it's worse" = concerning/negative outcome
-7. If truly ambiguous, return 0
+1. VOICE TRANSCRIPTION ERRORS - This is voice transcription which may contain errors from phonetically similar words. Match based on both phonetic similarity (words that sound alike) and semantic meaning (intended meaning).
+2. EXACT OPTION MATCHING - If the transcript is exactly or nearly identical to one of the option texts, that's the correct match.
+3. NEGATIONS - Pay close attention to negative words which reverse meaning.
+4. COMPLETE MEANING - Match the full meaning and intent, not just isolated keywords.
+5. NUMERIC VALUES - If an option contains a number and the patient said that number, match it.
+6. AMBIGUITY - If truly ambiguous, return 0.
 
-Be VERY careful - incorrectly matching a positive response as negative (or vice versa) affects patient care.`,
+Be VERY careful - incorrect matches affect patient care.`,
           },
           {
             role: 'user',
@@ -60,7 +59,7 @@ Patient said: "${userResponse}"
 Options:
 ${optionsStr}
 
-Analyze the patient's COMPLETE response including any negations. Which option matches?`,
+This is a voice transcript that may contain phonetic transcription errors. Consider both the literal words and what the patient likely intended to say. Match to the most appropriate option.`,
           },
         ],
         temperature: 0.1,

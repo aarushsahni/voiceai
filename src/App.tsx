@@ -48,6 +48,7 @@ function App() {
     voice: 'cedar', // Default voice from voice5.py
     variables: [],           // Variable placeholders from generated script
     variableValues: {},      // User-filled values for variables
+    conversionMode: 'multi-step',  // Default to multi-step (more reliable)
   });
 
   // Active flow map - use custom if available and selected, otherwise default
@@ -244,7 +245,8 @@ function App() {
   const handleGenerateScript = useCallback(async (
     script: string,
     inputType: InputType,
-    mode: ScriptMode
+    mode: ScriptMode,
+    conversionMode?: 'single' | 'multi-step'
   ): Promise<{ scriptContent: string; greeting: string; variables?: string[] } | null> => {
     setIsGenerating(true);
     setError(null);
@@ -253,7 +255,7 @@ function App() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ script, inputType, mode }),
+        body: JSON.stringify({ script, inputType, mode, conversionMode: conversionMode || 'single' }),
       });
 
       if (!response.ok) {
