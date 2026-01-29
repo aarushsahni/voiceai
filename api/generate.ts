@@ -32,10 +32,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5',
+        model: 'gpt-5.2',
         input: `${systemInstructions}\n\n---\n\n${userMessage}`,
         reasoning: {
-          effort: 'low'
+          effort: 'medium'
         }
       }),
     });
@@ -147,6 +147,20 @@ VARIABLE PLACEHOLDERS:
 === SMS SURVEY JSON FORMAT ===
 If input is JSON with "pages" and "elements", parse it as an SMS survey:
 
+CRITICAL - PRESERVE ORIGINAL WORDING:
+- Keep the SMS text AS CLOSE TO ORIGINAL as possible
+- Only make minimal changes needed for voice (remove URLs, "text X" → "say X")
+- Do NOT rewrite or paraphrase the content
+- Do NOT add new content or questions not in the original
+
+CRITICAL - NO NUMBERS FOR OPTIONS:
+- NEVER say "say 1" or "press 2" or "respond with the number"
+- For binary choices (yes/no type): Phrase as a natural question
+  Example: "Would you like information to schedule, or are you not interested?"
+  The patient can naturally say "yes", "schedule", "not interested", etc.
+- For multiple choices: Read the options naturally
+  Example: "Please tell me why you're not interested. You can say: you're no longer a patient of the practice, you follow with a diabetes doctor, or it's not a priority right now."
+
 ELEMENT MAPPING:
 - "radiogroup" → type: "question" (multiple choice)
 - "html" → type: "statement" (info display) OR "question" (if it presents choices like MAIL/CALL)
@@ -154,9 +168,9 @@ ELEMENT MAPPING:
 
 PARSING RULES:
 1. Element "name" → step ID (snake_case)
-2. Element "title" → question text
-3. Element "html" → convert for voice (remove URLs, simplify)
-4. Element "choices" → options with labels
+2. Element "title" → Use the ORIGINAL title text, just remove "Text 1 for..." type instructions
+3. Element "html" → Keep original text, just remove URLs and adapt "text X" to "say X"
+4. Element "choices" → options with their original text as labels
 5. "visibleIf" → determines branching ({Info}=1 means this step follows when Info was option 1)
 6. Elements without visibleIf are entry points
 
@@ -174,10 +188,11 @@ BRANCHING:
 - Statement steps auto-continue to their next step
 - Terminal branches go to "end_call"
 
-VOICE ADAPTATION:
+VOICE ADAPTATION (MINIMAL CHANGES ONLY):
 - Remove URLs (can't click in voice)
+- Remove "Text 1 for X or 2 for Y" → Replace with natural question
 - Replace "text MAIL" with "say mail"
-- Keep essential info concise
+- Keep ALL other original wording intact
 
 === OPEN PROMPT FORMAT ===
 If input is NOT JSON, generate a complete script from the prompt.
@@ -249,22 +264,21 @@ function buildUserMessage(script: string, inputType: string, mode: string): stri
     // SMS/IVR Script mode - parse as structured survey format
     return `INPUT TYPE: SMS Survey Script
 
-Task: Convert this SMS/IVR survey script into a voice IVR script with branching flow.
-- Each "radiogroup" → question step
-- Each "html" → statement step (or question if it offers choices like MAIL/CALL)
-- Each "text" → question step (ask verbally, LLM listens naturally)
-- Parse "visibleIf" for branching logic
-- Convert variables to [placeholder] format
-- List all variables (except patient_name) in the "variables" array
+Task: Convert this SMS/IVR survey script into a voice IVR script.
 
-IMPORTANT - Include acknowledgements after each patient response:
-- Positive responses: "Great.", "Good to hear.", "Perfect."
-- Neutral responses: "Got it.", "Okay, thank you.", "I understand."
-- Concerning responses: "I'm sorry to hear that.", "Thank you for letting me know."
+CRITICAL RULES:
+1. PRESERVE ORIGINAL TEXT - Keep the exact wording from the SMS as much as possible
+2. NO NUMBERS - Never say "say 1" or "press 2". Convert to natural language:
+   - Binary: "Would you like to schedule, or are you not interested?"
+   - Multiple: "You can say: [option 1], [option 2], or [option 3]"
+3. MINIMAL CHANGES - Only adapt what's necessary for voice:
+   - Remove URLs
+   - Remove "Text 1 for..." instructions
+   - Replace "text MAIL" with "say mail"
 
-Remember: Penn Medicine greeting, [patient_name] placeholder, warm conversational tone, end with goodbye.
+The questions and statements should sound almost identical to the SMS, just spoken naturally.
 
-SMS/IVR Script:
+SMS/IVR Script to convert:
 ${script}
 `;
   }

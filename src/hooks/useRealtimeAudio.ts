@@ -566,8 +566,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       
       const isStatement = nextStep.type === 'statement';
       const instruction = isStatement
-        ? `Say this information to the patient: "${nextStep.question}" Then immediately continue.`
-        : `Briefly acknowledge their response, then ask this question: "${nextStep.question}"`;
+        ? `Say this EXACTLY to the patient (word for word): "${nextStep.question}"`
+        : `Say a brief acknowledgment like "Got it" or "I understand", then say this EXACT question (do not paraphrase or change it): "${nextStep.question}"`;
       
       const nextMessage = {
         type: 'conversation.item.create',
