@@ -301,9 +301,19 @@ function App() {
       if (nameToUse) {
         greeting = greeting.replace(/\[patient_name\]/gi, nameToUse);
       } else {
-        // No name - clean up the placeholder
-        greeting = greeting.replace(/,?\s*\[patient_name\],?/gi, '');
-        greeting = greeting.replace(/Hi\s+,/g, 'Hello,');
+        // No name - remove the placeholder and clean up greeting
+        // Pattern 1: "Hi [patient_name], " → "" (remove the entire greeting part)
+        greeting = greeting.replace(/^(Hi|Hello)\s+\[patient_name\]\s*,\s*/gi, '');
+        // Pattern 2: "[patient_name], " → ""
+        greeting = greeting.replace(/\[patient_name\]\s*,\s*/gi, '');
+        // Pattern 3: Any remaining "[patient_name]"
+        greeting = greeting.replace(/\[patient_name\]/gi, '');
+        // Clean up double spaces and leading/trailing whitespace
+        greeting = greeting.replace(/\s{2,}/g, ' ').trim();
+        // If greeting is now empty or too short, provide a default
+        if (!greeting || greeting.length < 5) {
+          greeting = 'Hello, this is Penn Medicine calling.';
+        }
       }
       
       // Get the script content and replace patient name there too

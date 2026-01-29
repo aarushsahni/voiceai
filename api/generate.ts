@@ -271,12 +271,15 @@ RULES:
 2. NO NUMBERS - Convert to natural language:
    - Binary: "Would you like X, or are you not interested?"
    - Multiple: "You can say: [option A], [option B], or [option C]"
-3. NATURAL CONVERSATION - Make it feel like a real conversation:
+3. GREETING - ALWAYS include [patient_name] in the first element/greeting:
+   - If text has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
+   - If no greeting: start with "Hi [patient_name], this is Penn Medicine calling..."
+4. NATURAL CONVERSATION - Make it feel like a real conversation:
    - After patient responds, acknowledge: "Got it.", "I understand.", "Thank you."
    - Before asking next question, transition smoothly
    - Use warm, human language
-4. For each choice list, read options naturally in conversational way
-5. IMPORTANT: Every question should naturally include an acknowledgment space for the previous response (except the first question)
+5. For each choice list, read options naturally in conversational way
+6. IMPORTANT: Every question should naturally include an acknowledgment space for the previous response (except the first question)
 
 Return ONLY valid JSON mapping element names to adapted text:
 {
@@ -465,9 +468,10 @@ Include these in the script instructions so the agent says them naturally.
 
 === FLOW RULES (ALL FORMATS) ===
 1. GREETING: 
-   - If the SMS already has a greeting (like "Hello from Penn Medicine..."), use that EXACTLY - do NOT add another greeting
-   - Only add "Hi [patient_name]," at the start if the SMS doesn't already have a greeting
-   - NEVER duplicate greetings (e.g., "Hi [patient_name], this is Penn Medicine. Hello from Penn Medicine..." is WRONG)
+   - ALWAYS include [patient_name] in the greeting
+   - If SMS has a greeting: integrate [patient_name] naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
+   - If SMS has no greeting: start with "Hi [patient_name], this is Penn Medicine calling..."
+   - NEVER duplicate greetings
    - The greeting should flow naturally into the first question
 2. Use [placeholder] format for variables - add them to "variables" array
 3. STEP ID = snake_case of label
@@ -535,7 +539,11 @@ CRITICAL RULES:
    - Remove URLs
    - Remove "Text 1 for..." instructions  
    - Replace "text MAIL" with "say mail"
-4. NO DUPLICATE GREETINGS - If the SMS starts with a greeting like "Hello from Penn Medicine", use that as the greeting. Do NOT add another greeting like "Hi [patient_name], this is Penn Medicine calling" before it.
+4. GREETING WITH [patient_name]:
+   - ALWAYS include [patient_name] in the greeting
+   - If SMS has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
+   - If SMS has no greeting: start with "Hi [patient_name], this is Penn Medicine calling..."
+   - NEVER duplicate greetings
 
 The questions and statements should sound almost identical to the SMS, just spoken naturally.
 
@@ -555,7 +563,9 @@ IMPORTANT - Include acknowledgements after each patient response:
 - Neutral responses: "Got it.", "Okay, thank you.", "I understand."
 - Concerning responses: "I'm sorry to hear that.", "Thank you for letting me know."
 
-Remember: Penn Medicine greeting, [patient_name] placeholder, warm conversational tone, end with goodbye.
+GREETING: ALWAYS include [patient_name] in the greeting. Start with "Hi [patient_name], this is Penn Medicine calling..."
+
+Remember: Warm conversational tone, end with goodbye.
 
 Prompt:
 ${script}
