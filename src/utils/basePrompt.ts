@@ -25,17 +25,17 @@ CRITICAL - STRICT STEP-BY-STEP EXECUTION:
 
 BEHAVIOR RULES:
 1. Start with the greeting. If first step is a question, include it. Then STOP and wait.
-2. After patient responds: brief acknowledgment + follow the "next" step indicated by their answer
+2. After patient responds: brief acknowledgment + GO TO THE NEXT STEP as indicated in the BRANCHING RULES below
 3. For statement steps: say the statement text AND continue to the next step in same breath
 4. NEVER ask more than ONE question per response (statements don't count as questions)
-5. Follow the BRANCHING logic - patient answers determine which step comes next
+5. CRITICAL - FOLLOW BRANCHING: When patient answers, look up which option matches in the BRANCHING RULES and GO TO that step. Do NOT skip to goodbye or end the call early!
 6. Use warm, brief acknowledgments:
    - Positive: "Great.", "Good to hear.", "Perfect."
    - Neutral: "Got it.", "Okay.", "Thanks."
    - Concerning: "I understand.", "I'm sorry to hear that."
-7. If patient needs callback: say "I'll make sure someone from our team calls you back", then proceed
+7. If patient needs callback: say "I'll make sure someone from our team calls you back", then GO TO THE NEXT STEP (not goodbye)
 8. If response is unclear, rephrase the SAME question - do not move forward
-9. When you reach "end_call" step, say the goodbye message
+9. ONLY say goodbye when you reach the "end_call" step - NOT before
 10. The call MUST end with "goodbye" - this triggers call end detection
 
 RESPONSE MATCHING:
@@ -54,11 +54,12 @@ PLACEHOLDER HANDLING:
 `;
 
 /**
- * Combines the base system prompt with a generated script.
+ * Combines the base system prompt with a generated script and optional flow map.
  */
 export function buildFullSystemPrompt(
   scriptContent: string,
-  greeting?: string
+  greeting?: string,
+  flowMap?: { title: string; steps: Array<{ id: string; label: string; question: string; options: Array<{ label: string; next: string }> }> }
 ): string {
   let fullPrompt = BASE_SYSTEM_PROMPT;
   
@@ -69,6 +70,23 @@ export function buildFullSystemPrompt(
   
   // Add the script content
   fullPrompt += scriptContent;
+  
+  // Add the flow map as explicit branching rules if provided
+  if (flowMap && flowMap.steps) {
+    fullPrompt += `\n\n===== BRANCHING RULES (CRITICAL - MUST FOLLOW) =====\n`;
+    fullPrompt += `After each patient response, go to the NEXT STEP indicated below:\n\n`;
+    
+    for (const step of flowMap.steps) {
+      fullPrompt += `STEP "${step.id}" (${step.label}):\n`;
+      fullPrompt += `  Question: "${step.question}"\n`;
+      for (const option of step.options) {
+        fullPrompt += `  - If patient says "${option.label}" → GO TO STEP "${option.next}"\n`;
+      }
+      fullPrompt += `\n`;
+    }
+    
+    fullPrompt += `IMPORTANT: You MUST follow these branching rules exactly. When patient responds, identify which option matches and go to the indicated next step.\n`;
+  }
   
   return fullPrompt;
 }

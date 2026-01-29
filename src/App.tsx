@@ -296,23 +296,40 @@ function App() {
       const nameToUse = patientName?.trim() || '';
       
       // Replace [patient_name] placeholder
-      greeting = greeting.replace(/\[patient_name\]/g, nameToUse);
-      
-      // Clean up awkward spacing if no name provided
-      greeting = greeting.replace(/Hi\s+,/g, 'Hi,');
-      greeting = greeting.replace(/^Hi,\s*this is/i, 'Hello, this is');
+      if (nameToUse) {
+        greeting = greeting.replace(/\[patient_name\]/gi, nameToUse);
+      } else {
+        // No name - clean up the placeholder
+        greeting = greeting.replace(/,?\s*\[patient_name\],?/gi, '');
+        greeting = greeting.replace(/Hi\s+,/g, 'Hello,');
+      }
       
       // Get the script content and replace patient name there too
       let scriptContent = scriptSettings.generatedScriptContent;
-      scriptContent = scriptContent.replace(/\[patient_name\]/g, nameToUse);
+      if (nameToUse) {
+        scriptContent = scriptContent.replace(/\[patient_name\]/gi, nameToUse);
+      } else {
+        scriptContent = scriptContent.replace(/\[patient_name\]/gi, '');
+      }
       
-      // Build the full system prompt by combining base template + greeting + script
-      return buildFullSystemPrompt(scriptContent, greeting);
+      // Replace other variable placeholders
+      const variableValues = scriptSettings.variableValues || {};
+      for (const [varName, value] of Object.entries(variableValues)) {
+        if (value) {
+          const regex = new RegExp(`\\[${varName}\\]`, 'gi');
+          greeting = greeting.replace(regex, value);
+          scriptContent = scriptContent.replace(regex, value);
+        }
+      }
+      
+      // Build the full system prompt by combining base template + greeting + script + flow map
+      // Pass the flow map so branching rules are included explicitly
+      return buildFullSystemPrompt(scriptContent, greeting, customFlowMap || undefined);
     }
 
     // Use built-in scripts
     return getSystemPrompt(scriptSettings.scriptChoice, scriptSettings.mode, patientName || undefined);
-  }, [scriptSettings, patientName]);
+  }, [scriptSettings, patientName, customFlowMap]);
 
   // Start a new call
   const handleStartCall = useCallback(() => {
