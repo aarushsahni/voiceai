@@ -8,6 +8,7 @@ export interface TranscriptEntry {
 export interface FlowStep {
   id: string;
   label: string;
+  type?: 'question' | 'statement';  // question = wait for response (default), statement = auto-continue
   info: string;
   question: string;
   options: FlowOption[];
@@ -17,6 +18,7 @@ export interface FlowOption {
   label: string;
   keywords?: string[];  // voice5.py includes keywords for matching
   next: string;
+  triggers_callback?: boolean;  // If true, this option triggers a callback request
 }
 
 export interface FlowMap {

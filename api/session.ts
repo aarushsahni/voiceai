@@ -15,7 +15,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { systemPrompt, voice = 'cedar', patientName, mode = 'deterministic' } = req.body || {};
+    const { 
+      systemPrompt, 
+      voice = 'cedar', 
+      patientName, 
+      mode = 'deterministic',
+      variableValues = {}  // User-filled variable values (e.g., { street_address: "123 Main St" })
+    } = req.body || {};
 
     // Use provided system prompt or fall back to default
     let instructions = systemPrompt;
@@ -33,6 +39,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         instructions = instructions.replace(/Hi \[patient_name\],/gi, 'Hello,');
         instructions = instructions.replace(/\[patient_name\]/gi, '');
       }
+      
+      // Replace all other variable placeholders with their values
+      for (const [varName, value] of Object.entries(variableValues)) {
+        if (value && typeof value === 'string') {
+          // Replace [variable_name] with the actual value
+          const regex = new RegExp(`\\[${varName}\\]`, 'gi');
+          instructions = instructions.replace(regex, value);
+        }
+      }
+      
+      // Remove any remaining unfilled placeholders (replace with empty or generic text)
+      instructions = instructions.replace(/\[[a-z_]+\]/gi, '');
     }
 
     // Temperature from voice5.py: 0.6 for deterministic, 0.9 for explorative

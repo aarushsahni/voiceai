@@ -46,6 +46,8 @@ function App() {
     generatedScriptContent: null,
     generatedGreeting: null,
     voice: 'cedar', // Default voice from voice5.py
+    variables: [],           // Variable placeholders from generated script
+    variableValues: {},      // User-filled values for variables
   });
 
   // Active flow map - use custom if available and selected, otherwise default
@@ -238,12 +240,12 @@ function App() {
     onError: handleError,
   });
 
-  // Generate/convert custom script - returns script content and greeting
+  // Generate/convert custom script - returns script content, greeting, and variables
   const handleGenerateScript = useCallback(async (
     script: string,
     inputType: InputType,
     mode: ScriptMode
-  ): Promise<{ scriptContent: string; greeting: string } | null> => {
+  ): Promise<{ scriptContent: string; greeting: string; variables?: string[] } | null> => {
     setIsGenerating(true);
     setError(null);
 
@@ -274,6 +276,7 @@ function App() {
       return {
         scriptContent: data.scriptContent || '',
         greeting: data.greeting || 'Hello, this is Penn Medicine calling.',
+        variables: data.variables || [],  // List of variable placeholders
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to generate script';
@@ -329,7 +332,13 @@ function App() {
     setCallbackReasons([]);
 
     const systemPrompt = getCallSystemPrompt();
-    startCall(patientName || undefined, systemPrompt, scriptSettings.voice, scriptSettings.mode);
+    startCall(
+      patientName || undefined, 
+      systemPrompt, 
+      scriptSettings.voice, 
+      scriptSettings.mode,
+      scriptSettings.variableValues || {}
+    );
   }, [patientName, scriptSettings, getCallSystemPrompt, startCall]);
 
   // End current call

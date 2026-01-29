@@ -13,11 +13,14 @@ export interface ScriptSettings {
   generatedScriptContent: string | null;  // Just the script steps (not full prompt)
   generatedGreeting: string | null;       // Editable first sentence
   voice: string;
+  variables: string[];                    // List of variable names from generated script (e.g., ["street_address", "practice_number"])
+  variableValues: Record<string, string>; // User-filled values for each variable
 }
 
 interface GenerateResult {
   scriptContent: string;  // Just the script steps
   greeting: string;
+  variables?: string[];   // List of variable placeholders (e.g., ["street_address", "practice_number"])
 }
 
 // Saved script structure for localStorage
@@ -29,6 +32,7 @@ export interface SavedScript {
   generatedGreeting: string;
   flowMap: FlowMapType | null;
   mode: ScriptMode;
+  variables: string[];
   savedAt: string;
 }
 
@@ -71,8 +75,27 @@ export function ScriptConfig({
   const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const isCustom = settings.scriptChoice === 'custom';
+
+  // Timer for tracking generation time
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    
+    if (isGenerating) {
+      setElapsedSeconds(0);
+      interval = setInterval(() => {
+        setElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      setElapsedSeconds(0);
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isGenerating]);
 
   // Load saved scripts from localStorage on mount
   useEffect(() => {
@@ -107,6 +130,7 @@ export function ScriptConfig({
       generatedGreeting: settings.generatedGreeting || '',
       flowMap: flowMap || null,
       mode: settings.mode,
+      variables: settings.variables || [],
       savedAt: new Date().toISOString(),
     };
     
@@ -123,6 +147,8 @@ export function ScriptConfig({
       generatedScriptContent: script.generatedScriptContent,
       generatedGreeting: script.generatedGreeting,
       mode: script.mode,
+      variables: script.variables || [],
+      variableValues: {}, // Reset values when loading a new script
     });
     if (onLoadFlowMap && script.flowMap) {
       onLoadFlowMap(script.flowMap);
@@ -177,8 +203,27 @@ export function ScriptConfig({
         ...settings, 
         generatedScriptContent: result.scriptContent,
         generatedGreeting: result.greeting,
+        variables: result.variables || [],
+        variableValues: {}, // Reset variable values when regenerating
       });
     }
+  };
+
+  const handleVariableChange = (varName: string, value: string) => {
+    onSettingsChange({
+      ...settings,
+      variableValues: {
+        ...settings.variableValues,
+        [varName]: value,
+      },
+    });
+  };
+
+  // Helper to format variable name for display
+  const formatVarName = (varName: string) => {
+    return varName
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
   };
 
   return (
@@ -364,7 +409,16 @@ export function ScriptConfig({
                   )}
                 </button>
                 
-                {settings.generatedScriptContent && (
+                {/* Elapsed time during generation */}
+                {isGenerating && (
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-full">
+                      <span className="font-mono font-medium text-indigo-600">{elapsedSeconds}s</span>
+                    </div>
+                  </div>
+                )}
+                
+                {settings.generatedScriptContent && !isGenerating && (
                   <>
                     <span className="text-sm text-green-600 font-medium">
                       ✓ Script ready
@@ -429,6 +483,35 @@ export function ScriptConfig({
                   />
                   <p className="mt-1 text-xs text-slate-500">
                     Use [patient_name] as placeholder. This is the first thing the agent will say.
+                  </p>
+                </div>
+              )}
+
+              {/* Variable Inputs */}
+              {settings.generatedScriptContent && settings.variables && settings.variables.length > 0 && (
+                <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <label className="block text-sm font-medium text-amber-800 mb-3">
+                    Fill in Variables
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {settings.variables.map((varName) => (
+                      <div key={varName}>
+                        <label className="block text-xs font-medium text-amber-700 mb-1">
+                          {formatVarName(varName)}
+                        </label>
+                        <input
+                          type="text"
+                          value={settings.variableValues[varName] || ''}
+                          onChange={(e) => handleVariableChange(varName, e.target.value)}
+                          disabled={disabled}
+                          placeholder={`Enter ${formatVarName(varName).toLowerCase()}...`}
+                          className="w-full px-2 py-1.5 text-sm border border-amber-300 rounded focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:bg-slate-100"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-amber-600">
+                    These values will replace [placeholders] in the script during the call.
                   </p>
                 </div>
               )}

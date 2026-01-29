@@ -220,7 +220,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     patientName?: string,
     systemPrompt?: string,
     voice: string = 'cedar',
-    mode: string = 'deterministic'
+    mode: string = 'deterministic',
+    variableValues: Record<string, string> = {}
   ) => {
     if (!isSupported) {
       onError?.('Browser does not support audio recording');
@@ -249,7 +250,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           patientName, 
           systemPrompt: systemPrompt || '', 
           voice,
-          mode
+          mode,
+          variableValues,  // Pass variable values for substitution
         }),
       });
 

@@ -99,6 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       scriptContent: parsed.script || '',  // Just the script steps, not full system prompt
       finalPhrases: parsed.final_phrases || ['goodbye', 'bye', 'take care'],
       flowMap: parsed.flow || null,
+      variables: parsed.variables || [],  // List of variable placeholders used (e.g., ["street_address", "practice_number"])
     });
   } catch (error) {
     console.error('Generation error:', error);
@@ -109,19 +110,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 function buildConversionInstructions(): string {
-  return `You generate SCRIPT CONTENT for a medical IVR voice agent.
+  return `You convert SMS survey scripts OR open prompts into IVR voice agent scripts.
 
 Return ONLY valid JSON with this schema:
 {
   "greeting": string,
   "script": string,
   "final_phrases": [string],
+  "variables": [string],
   "flow": {
     "title": string,
     "steps": [
       {
         "id": string,
         "label": string,
+        "type": "question" | "statement",
         "question": string,
         "info": string,
         "options": [
@@ -132,74 +135,154 @@ Return ONLY valid JSON with this schema:
   }
 }
 
-CRITICAL REQUIREMENTS:
-1. EXTRACT ALL TOPICS from the user's prompt and create a SEPARATE STEP for EACH topic. Read the prompt carefully and identify every distinct thing they want to ask about.
-2. PRESERVE ALL SPECIFIC DETAILS from the user's prompt - medication names, equipment names, appointment dates/times, symptom types, etc. Include them verbatim in the questions.
-3. CALLBACK HANDLING - NO separate callback step. Instead:
-   - Options that need callback should have "triggers_callback": true and "next" pointing to the NEXT MAIN STEP
-   - The LLM will say the callback message ("I'll make sure the care team knows, someone will call you back soon") as acknowledgment, then ask the next question
-   - This keeps the flow simple: callback options go to the next step like normal, just with triggers_callback flag
+STEP TYPES:
+- "question" (default): Ask something and wait for patient response
+- "statement": Say information, then auto-continue to the next step (no response needed)
 
-SCRIPT FORMAT EXAMPLE:
-"""
-STEP [step_id] - [Step Label]:
-Ask: "[Question with specific details from prompt]"
-- If [positive]: Acknowledge, go to [next_step]
-- If [needs callback]: Say callback message, go to [next_step] (triggers_callback: true)
-- If unclear: Repeat question
+VARIABLE PLACEHOLDERS:
+- Use [variable_name] format for all dynamic values
+- Include ALL variables used in the "variables" array (excluding patient_name which is always included)
+- Common variables: [practice_number], [street_address], [city], [state], [postal_code], [appointment_date], etc.
 
-[... create steps for ALL topics from the user's prompt ...]
+=== SMS SURVEY JSON FORMAT ===
+If input is JSON with "pages" and "elements", parse it as an SMS survey:
 
-STEP closing - Closing:
-Ask: "Is there anything else I can help you with today?"
-- If yes: Say callback message, go to closing (triggers_callback: true)
-- If no: Go to end_call
+ELEMENT MAPPING:
+- "radiogroup" → type: "question" (multiple choice)
+- "html" → type: "statement" (info display) OR "question" (if it presents choices like MAIL/CALL)
+- "text" → type: "question" (ask verbally, the LLM will listen and respond naturally)
 
-STEP end_call - End Call:
-Say: "Thank you for your time today. Take care, goodbye!"
-"""
+PARSING RULES:
+1. Element "name" → step ID (snake_case)
+2. Element "title" → question text
+3. Element "html" → convert for voice (remove URLs, simplify)
+4. Element "choices" → options with labels
+5. "visibleIf" → determines branching ({Info}=1 means this step follows when Info was option 1)
+6. Elements without visibleIf are entry points
 
-FLOW RULES:
-1. Greeting MUST include the first question: "Hi [patient_name], this is Penn Medicine calling... [first question]"
-2. Use [patient_name] placeholder - never make up a name
-3. Create a step for EVERY topic in the user's prompt - don't combine or skip any
-4. Include specific names/dates/details from the prompt in your questions
-5. STEP ID MUST MATCH STEP LABEL: The step "id" should be a snake_case version of the step "label". Examples:
-   - Label: "Blood Pressure Check" → id: "blood_pressure_check"
-   - Label: "Diet and Exercise" → id: "diet_and_exercise"
-   - Label: "Medication Review" → id: "medication_review"
-   This ensures options like "→ diet_and_exercise" clearly match the step "Diet and Exercise"
-6. CRITICAL - VALID STEP REFERENCES: Each option's "next" MUST point to a step ID that EXISTS in the flow. Before finalizing, verify:
-   - Every "next" value matches an existing step "id"
-   - Valid step IDs are: the IDs you define for main steps + "closing" + "end_call"
-   - Do NOT reference step IDs that don't exist
-7. Callback options need: "triggers_callback": true, and "next" pointing to the NEXT MAIN STEP
-8. ALWAYS include a "closing" step after all main steps: "Is there anything else I can help you with today?"
-9. The LAST main step should go to "closing", and "closing" goes to "end_call"
-10. The LAST sentence must contain "goodbye"
-11. final_phrases: ["goodbye", "take care", "bye"]
-12. Each option needs a "keywords" array with natural variations
+VARIABLE CONVERSION:
+- {{@practice_number}} → [practice_number]
+- PARTICIPANT_STREET_ADDRESS → [street_address]
+- PARTICIPANT_CITY → [city]
+- PARTICIPANT_STATE → [state]
+- PARTICIPANT_POSTAL_CODE → [postal_code]
+- PARTICIPANT_STREET_ADDRESS_2 → [street_address_2]
+- Any {{@var}} → [var]
+
+BRANCHING:
+- Parse visibleIf conditions to build flow tree
+- Statement steps auto-continue to their next step
+- Terminal branches go to "end_call"
+
+VOICE ADAPTATION:
+- Remove URLs (can't click in voice)
+- Replace "text MAIL" with "say mail"
+- Keep essential info concise
+
+=== OPEN PROMPT FORMAT ===
+If input is NOT JSON, generate a complete script from the prompt.
+This path is unchanged - create steps based on the topics in the prompt.
+
+=== ACKNOWLEDGEMENTS (REQUIRED) ===
+After EVERY patient response, include a brief acknowledgement before the next question:
+- Positive: "Great.", "Good to hear.", "Perfect.", "Wonderful."
+- Neutral: "Got it.", "Okay, thank you.", "I understand.", "Thanks for letting me know."
+- Concerning: "I'm sorry to hear that.", "I understand, thank you for sharing."
+- Callback-triggering: "I'll make sure someone from our care team calls you back."
+
+Include these in the script instructions so the agent says them naturally.
+
+=== FLOW RULES (ALL FORMATS) ===
+1. Greeting: "Hi [patient_name], this is Penn Medicine calling..." + first question or statement
+2. Use [placeholder] format for variables - add them to "variables" array
+3. STEP ID = snake_case of label
+4. Every "next" must reference an existing step ID or "end_call"
+5. Statement steps: options = [{"label": "continue", "next": "next_step_id"}]
+6. Questions asking for open-ended info (like new address): still type "question", LLM handles naturally
+7. Terminal points (confirmations, etc.) go to "end_call"
+8. Last spoken text must contain "goodbye"
+9. final_phrases: ["goodbye", "take care", "bye"]
+10. Include "keywords" array for each option with speech variations
+
+=== EXAMPLE: SMS → IVR ===
+SMS input:
+{
+  "type": "radiogroup",
+  "name": "addresscheck",
+  "title": "Is PARTICIPANT_STREET_ADDRESS your correct address?",
+  "choices": [{"value": "Y", "text": "Yes"}, {"value": "N", "text": "No"}]
+}
+
+IVR output:
+{
+  "id": "address_check",
+  "label": "Address Check", 
+  "type": "question",
+  "question": "The mailing address we have on file is [street_address], [city], [state], [postal_code]. Is this your correct address?",
+  "options": [
+    {"label": "Yes", "keywords": ["yes", "yeah", "correct", "right"], "next": "confirmation"},
+    {"label": "No", "keywords": ["no", "nope", "wrong", "incorrect"], "next": "new_address"}
+  ]
+}
+
+Variables: ["street_address", "city", "state", "postal_code"]
+
+=== EXAMPLE: Text input → Question ===
+SMS "text" element asking for new address becomes a regular question:
+{
+  "id": "new_address",
+  "label": "New Address",
+  "type": "question",
+  "question": "What is your current mailing address?",
+  "info": "Patient provides address verbally",
+  "options": [
+    {"label": "Address provided", "keywords": ["*"], "next": "confirmation"}
+  ]
+}
+The LLM will listen to whatever they say and acknowledge it naturally.
 `;
 }
 
 function buildUserMessage(script: string, inputType: string, mode: string): string {
-  const modeDesc = mode === 'explorative' 
-    ? 'EXPLORATIVE (natural conversation, open-ended within topics)'
-    : 'DETERMINISTIC (follow script verbatim)';
+  // Input type is determined by user button selection, not content detection
+  if (inputType === 'script') {
+    // SMS/IVR Script mode - parse as structured survey format
+    return `INPUT TYPE: SMS Survey Script
 
-  if (inputType === 'prompt') {
-    return `Mode: ${modeDesc}
-Task: Generate a complete IVR script and flow from this open-ended prompt.
-Remember: Start with Penn Medicine greeting, use [patient_name] placeholder, be warm and human, end with goodbye.
-Prompt:
+Task: Convert this SMS/IVR survey script into a voice IVR script with branching flow.
+- Each "radiogroup" → question step
+- Each "html" → statement step (or question if it offers choices like MAIL/CALL)
+- Each "text" → question step (ask verbally, LLM listens naturally)
+- Parse "visibleIf" for branching logic
+- Convert variables to [placeholder] format
+- List all variables (except patient_name) in the "variables" array
+
+IMPORTANT - Include acknowledgements after each patient response:
+- Positive responses: "Great.", "Good to hear.", "Perfect."
+- Neutral responses: "Got it.", "Okay, thank you.", "I understand."
+- Concerning responses: "I'm sorry to hear that.", "Thank you for letting me know."
+
+Remember: Penn Medicine greeting, [patient_name] placeholder, warm conversational tone, end with goodbye.
+
+SMS/IVR Script:
 ${script}
 `;
   }
 
-  return `Mode: ${modeDesc}
-Task: Convert this script into a voice-agent system prompt and flow.
-Remember: Start with Penn Medicine greeting, use [patient_name] placeholder, be warm and human, end with goodbye.
-Script:
+  // Open-ended prompt mode - generate from description
+  return `INPUT TYPE: Open-ended prompt
+
+Task: Generate a complete IVR voice script and flow from this description.
+Create steps for each topic mentioned, include any variables in "variables" array.
+
+IMPORTANT - Include acknowledgements after each patient response:
+- Positive responses: "Great.", "Good to hear.", "Perfect."
+- Neutral responses: "Got it.", "Okay, thank you.", "I understand."
+- Concerning responses: "I'm sorry to hear that.", "Thank you for letting me know."
+
+Remember: Penn Medicine greeting, [patient_name] placeholder, warm conversational tone, end with goodbye.
+
+Prompt:
 ${script}
 `;
 }

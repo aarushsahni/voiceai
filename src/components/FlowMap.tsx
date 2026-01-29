@@ -209,6 +209,11 @@ export function FlowMap({
                       }`}>
                         {index + 1}. {step.label}
                       </span>
+                      {step.type === 'statement' && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                          auto
+                        </span>
+                      )}
                       <span className="text-xs text-slate-400">
                         {step.info}
                       </span>
