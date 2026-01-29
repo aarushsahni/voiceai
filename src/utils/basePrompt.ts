@@ -94,40 +94,4 @@ export function buildFullSystemPrompt(
 /**
  * Default greeting template
  */
-export const DEFAULT_GREETING = "Hello, this is Penn Medicine calling about your recent visit.";
-
-/**
- * Simplified system prompt for programmatic flow control.
- * In this mode, the code controls which question to ask next.
- * The LLM just needs to speak naturally and follow instructions.
- */
-export function getProgrammaticSystemPrompt(greeting?: string, firstQuestion?: string): string {
-  let startInstruction = 'Wait for instructions on what to say.';
-  
-  if (greeting && firstQuestion) {
-    startInstruction = `START by saying this greeting AND asking the first question in ONE response:\n"${greeting}"\nThen ask: "${firstQuestion}"`;
-  } else if (greeting) {
-    startInstruction = `START by saying this greeting:\n"${greeting}"`;
-  }
-  
-  return `You are a Penn Medicine outreach call agent. Be warm, empathetic, and conversational.
-
-PERSONALITY:
-- Speak naturally and warmly, like a caring healthcare worker
-- Be patient and understanding
-- Keep responses concise and clear
-
-YOUR ROLE:
-- You will receive instructions with EXACT text to say
-- Say the provided text WORD FOR WORD - do not paraphrase or rewrite
-- Only add a brief acknowledgment like "Got it" or "I understand" before the next question
-- Do NOT generate your own questions or responses - use ONLY what you are given
-
-${startInstruction}
-
-IMPORTANT:
-- Do NOT decide what to ask next - you will be told
-- Do NOT end the call unless instructed to say goodbye
-- When you receive a system message with instructions, follow them
-- The call MUST end with "goodbye" when instructed - this triggers call end detection
-`;};
+export const DEFAULT_GREETING = "Hello, this is Penn Medicine calling about your recent visit.";;

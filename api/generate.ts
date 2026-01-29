@@ -208,7 +208,11 @@ After EVERY patient response, include a brief acknowledgement before the next qu
 Include these in the script instructions so the agent says them naturally.
 
 === FLOW RULES (ALL FORMATS) ===
-1. Greeting: "Hi [patient_name], this is Penn Medicine calling..." + first question or statement
+1. GREETING: 
+   - If the SMS already has a greeting (like "Hello from Penn Medicine..."), use that EXACTLY - do NOT add another greeting
+   - Only add "Hi [patient_name]," at the start if the SMS doesn't already have a greeting
+   - NEVER duplicate greetings (e.g., "Hi [patient_name], this is Penn Medicine. Hello from Penn Medicine..." is WRONG)
+   - The greeting should flow naturally into the first question
 2. Use [placeholder] format for variables - add them to "variables" array
 3. STEP ID = snake_case of label
 4. Every "next" must reference an existing step ID or "end_call"
@@ -273,8 +277,9 @@ CRITICAL RULES:
    - Multiple: "You can say: [option 1], [option 2], or [option 3]"
 3. MINIMAL CHANGES - Only adapt what's necessary for voice:
    - Remove URLs
-   - Remove "Text 1 for..." instructions
+   - Remove "Text 1 for..." instructions  
    - Replace "text MAIL" with "say mail"
+4. NO DUPLICATE GREETINGS - If the SMS starts with a greeting like "Hello from Penn Medicine", use that as the greeting. Do NOT add another greeting like "Hi [patient_name], this is Penn Medicine calling" before it.
 
 The questions and statements should sound almost identical to the SMS, just spoken naturally.
 

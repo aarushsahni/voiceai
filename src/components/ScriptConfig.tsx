@@ -4,7 +4,6 @@ import { FlowMap as FlowMapType } from '../types';
 
 export type ScriptMode = 'deterministic';
 export type InputType = 'script' | 'prompt';
-export type FlowControlMode = 'llm' | 'programmatic';  // llm = LLM decides flow, programmatic = code controls flow
 
 export interface ScriptSettings {
   mode: ScriptMode;
@@ -16,7 +15,6 @@ export interface ScriptSettings {
   voice: string;
   variables: string[];                    // List of variable names from generated script (e.g., ["street_address", "practice_number"])
   variableValues: Record<string, string>; // User-filled values for each variable
-  flowControlMode: FlowControlMode;       // 'llm' = LLM controls flow, 'programmatic' = code controls flow with match API
 }
 
 interface GenerateResult {
@@ -320,54 +318,6 @@ export function ScriptConfig({
                   </option>
                 ))}
               </select>
-            </div>
-          </div>
-
-          {/* Flow Control Mode Toggle */}
-          <div className="mt-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
-            <label className="block text-sm font-medium text-slate-700 mb-2">
-              Flow Control Mode
-            </label>
-            <div className="flex gap-3">
-              <label className={`flex-1 flex items-center gap-2 px-3 py-2 rounded border cursor-pointer text-sm ${
-                settings.flowControlMode === 'llm'
-                  ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                  : 'border-slate-200 hover:border-slate-300'
-              }`}>
-                <input
-                  type="radio"
-                  name="flowControlMode"
-                  value="llm"
-                  checked={settings.flowControlMode === 'llm'}
-                  onChange={() => onSettingsChange({ ...settings, flowControlMode: 'llm' })}
-                  disabled={disabled}
-                  className="sr-only"
-                />
-                <div>
-                  <div className="font-medium">LLM-Controlled</div>
-                  <div className="text-xs text-slate-500">LLM decides branching (faster, less reliable)</div>
-                </div>
-              </label>
-              
-              <label className={`flex-1 flex items-center gap-2 px-3 py-2 rounded border cursor-pointer text-sm ${
-                settings.flowControlMode === 'programmatic'
-                  ? 'border-green-500 bg-green-50 text-green-700'
-                  : 'border-slate-200 hover:border-slate-300'
-              }`}>
-                <input
-                  type="radio"
-                  name="flowControlMode"
-                  value="programmatic"
-                  checked={settings.flowControlMode === 'programmatic'}
-                  onChange={() => onSettingsChange({ ...settings, flowControlMode: 'programmatic' })}
-                  disabled={disabled}
-                  className="sr-only"
-                />
-                <div>
-                  <div className="font-medium">Programmatic</div>
-                  <div className="text-xs text-slate-500">Code controls branching (+300ms, more reliable)</div>
-                </div>
-              </label>
             </div>
           </div>
 
