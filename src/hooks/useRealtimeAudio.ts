@@ -1,23 +1,34 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { CallStatus, TranscriptEntry, LatencyInfo } from '../types';
+import { CallStatus, TranscriptEntry, LatencyInfo, FlowMap, FlowStep } from '../types';
 import { containsFinalPhrase } from '../utils/scripts';
+
+type FlowControlMode = 'llm' | 'programmatic';
 
 interface UseRealtimeAudioOptions {
   onTranscript?: (entry: TranscriptEntry) => void;
   onStatusChange?: (status: CallStatus) => void;
   onError?: (error: string) => void;
+  onStepChange?: (stepId: string) => void;  // Called when programmatic mode advances to a step
 }
 
 interface UseRealtimeAudioReturn {
   status: CallStatus;
   latency: LatencyInfo;
-  startCall: (patientName?: string, systemPrompt?: string, voice?: string, mode?: string) => Promise<void>;
+  startCall: (
+    patientName?: string, 
+    systemPrompt?: string, 
+    voice?: string, 
+    mode?: string,
+    variableValues?: Record<string, string>,
+    flowControlMode?: FlowControlMode,
+    flowMap?: FlowMap | null
+  ) => Promise<void>;
   endCall: () => void;
   isSupported: boolean;
 }
 
 export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseRealtimeAudioReturn {
-  const { onTranscript, onStatusChange, onError } = options;
+  const { onTranscript, onStatusChange, onError, onStepChange } = options;
   
   const [status, setStatus] = useState<CallStatus>('idle');
   const [latency, setLatency] = useState<LatencyInfo>({
@@ -61,6 +72,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   
   // Track if we're currently in a response (to avoid stale closure issues with status state)
   const inResponseRef = useRef<boolean>(false);
+  
+  // Programmatic flow control refs
+  const flowControlModeRef = useRef<FlowControlMode>('llm');
+  const flowMapRef = useRef<FlowMap | null>(null);
+  const currentStepIdRef = useRef<string | null>(null);
+  const pendingUserResponseRef = useRef<string | null>(null);
   
   // Response delay from voice5.py (RESPONSE_DELAY_SEC = 0.4)
   const RESPONSE_DELAY_MS = 400;
@@ -221,7 +238,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     systemPrompt?: string,
     voice: string = 'cedar',
     mode: string = 'deterministic',
-    variableValues: Record<string, string> = {}
+    variableValues: Record<string, string> = {},
+    flowControlMode: FlowControlMode = 'llm',
+    flowMap: FlowMap | null = null
   ) => {
     if (!isSupported) {
       onError?.('Browser does not support audio recording');
@@ -230,7 +249,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
     try {
       updateStatus('connecting');
-      addTranscript('system', 'Starting call...');
+      addTranscript('system', `Starting call... (${flowControlMode} flow control)`);
 
       // Reset state
       latenciesRef.current = [];
@@ -241,6 +260,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       waitingForGoodbyeRef.current = false;
       inResponseRef.current = false;
       transcriptLengthRef.current = 0;
+      
+      // Programmatic flow control state
+      flowControlModeRef.current = flowControlMode;
+      flowMapRef.current = flowMap;
+      currentStepIdRef.current = flowMap?.steps?.[0]?.id || null;  // Start at first step
+      pendingUserResponseRef.current = null;
 
       // 1. Get ephemeral token from our API
       const sessionResponse = await fetch('/api/session', {
@@ -417,6 +442,155 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     }
   }, [isSupported, updateStatus, addTranscript, onError, endCall, status]);
 
+  // Programmatic flow control - match user response and inject next step
+  const handleProgrammaticFlow = useCallback(async (
+    userResponse: string,
+    dataChannel: RTCDataChannel
+  ) => {
+    const flowMap = flowMapRef.current;
+    const currentStepId = currentStepIdRef.current;
+    
+    if (!flowMap || !currentStepId) {
+      console.log('[flow] No flow map or current step, falling back to LLM');
+      dataChannel.send(JSON.stringify({ type: 'response.create' }));
+      return;
+    }
+    
+    // Find current step
+    const currentStep = flowMap.steps.find(s => s.id === currentStepId);
+    if (!currentStep) {
+      console.log('[flow] Current step not found, falling back to LLM');
+      dataChannel.send(JSON.stringify({ type: 'response.create' }));
+      return;
+    }
+    
+    console.log(`[flow] Matching response for step "${currentStepId}": "${userResponse}"`);
+    
+    try {
+      // Call match API
+      const matchResponse = await fetch('/api/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: currentStep.question,
+          userResponse,
+          options: currentStep.options,
+        }),
+      });
+      
+      let nextStepId: string | null = null;
+      let matchedOptionLabel: string | null = null;
+      
+      if (matchResponse.ok) {
+        const matchData = await matchResponse.json();
+        if (matchData.match) {
+          matchedOptionLabel = matchData.match;
+          // Find the option that was matched
+          const matchedOption = currentStep.options.find(
+            opt => opt.label.toLowerCase() === matchData.match.toLowerCase()
+          );
+          if (matchedOption) {
+            nextStepId = matchedOption.next;
+            console.log(`[flow] Matched "${matchedOptionLabel}" → next step: "${nextStepId}"`);
+            
+            // Notify UI about the match
+            onStepChange?.(nextStepId);
+          }
+        }
+      }
+      
+      // If no match, stay on current step and ask to clarify
+      if (!nextStepId) {
+        console.log('[flow] No match found, asking for clarification');
+        const clarifyMessage = {
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'system',
+            content: [{
+              type: 'text',
+              text: `The patient's response was unclear. Politely say you didn't quite catch that and ask the question again: "${currentStep.question}"`
+            }]
+          }
+        };
+        dataChannel.send(JSON.stringify(clarifyMessage));
+        dataChannel.send(JSON.stringify({ type: 'response.create' }));
+        return;
+      }
+      
+      // Update current step
+      currentStepIdRef.current = nextStepId;
+      
+      // Check if we've reached the end
+      if (nextStepId === 'end_call') {
+        console.log('[flow] Reached end_call, saying goodbye');
+        const goodbyeMessage = {
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'system',
+            content: [{
+              type: 'text',
+              text: 'The conversation is complete. Give a warm closing: thank them for their time and say goodbye. Make sure to say the word "goodbye" at the end.'
+            }]
+          }
+        };
+        dataChannel.send(JSON.stringify(goodbyeMessage));
+        dataChannel.send(JSON.stringify({ type: 'response.create' }));
+        return;
+      }
+      
+      // Find the next step
+      const nextStep = flowMap.steps.find(s => s.id === nextStepId);
+      if (!nextStep) {
+        console.log(`[flow] Next step "${nextStepId}" not found, ending call`);
+        currentStepIdRef.current = 'end_call';
+        const errorMessage = {
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'system',
+            content: [{
+              type: 'text',
+              text: 'Thank the patient and say goodbye.'
+            }]
+          }
+        };
+        dataChannel.send(JSON.stringify(errorMessage));
+        dataChannel.send(JSON.stringify({ type: 'response.create' }));
+        return;
+      }
+      
+      // Inject the next question
+      console.log(`[flow] Injecting next step: "${nextStep.label}"`);
+      
+      const isStatement = nextStep.type === 'statement';
+      const instruction = isStatement
+        ? `Say this information to the patient: "${nextStep.question}" Then immediately continue.`
+        : `Briefly acknowledge their response, then ask this question: "${nextStep.question}"`;
+      
+      const nextMessage = {
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'system',
+          content: [{
+            type: 'text',
+            text: instruction
+          }]
+        }
+      };
+      
+      dataChannel.send(JSON.stringify(nextMessage));
+      dataChannel.send(JSON.stringify({ type: 'response.create' }));
+      
+    } catch (error) {
+      console.error('[flow] Error in programmatic flow:', error);
+      // Fall back to LLM
+      dataChannel.send(JSON.stringify({ type: 'response.create' }));
+    }
+  }, [onStepChange]);
+
   // Handle server events from data channel
   const handleServerEvent = useCallback((
     data: Record<string, unknown>,
@@ -444,7 +618,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         speechStoppedTimeRef.current = Date.now();
         updateStatus('processing');
         
-        // Schedule response creation with delay (like voice5.py _schedule_delayed_response)
+        // In programmatic mode, don't auto-trigger response - wait for transcription
+        if (flowControlModeRef.current === 'programmatic') {
+          console.log('[flow] Programmatic mode - waiting for transcription before responding');
+          break;
+        }
+        
+        // LLM mode: Schedule response creation with delay (like voice5.py _schedule_delayed_response)
         if (responseDelayTimerRef.current) {
           clearTimeout(responseDelayTimerRef.current);
         }
@@ -557,6 +737,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         const transcript = (data.transcript as string) || '';
         if (transcript) {
           addTranscript('user', transcript);
+        }
+        
+        // In programmatic mode, handle flow control here
+        if (flowControlModeRef.current === 'programmatic' && transcript && dataChannel) {
+          handleProgrammaticFlow(transcript, dataChannel);
         }
         break;
       }

@@ -11,7 +11,7 @@ import { CallSummary } from './components/CallSummary';
 import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
-import { buildFullSystemPrompt } from './utils/basePrompt';
+import { buildFullSystemPrompt, getProgrammaticSystemPrompt } from './utils/basePrompt';
 
 function App() {
   const [patientName, setPatientName] = useState('');
@@ -48,6 +48,7 @@ function App() {
     voice: 'cedar', // Default voice from voice5.py
     variables: [],           // Variable placeholders from generated script
     variableValues: {},      // User-filled values for variables
+    flowControlMode: 'programmatic',  // Default to programmatic (more reliable)
   });
 
   // Active flow map - use custom if available and selected, otherwise default
@@ -234,10 +235,25 @@ function App() {
     setError(errorMsg);
   }, []);
 
+  // Handle step changes from programmatic flow control
+  const handleProgrammaticStepChange = useCallback((stepId: string) => {
+    console.log(`[flow] Programmatic step change to: ${stepId}`);
+    
+    // Mark previous step as completed
+    if (currentStepIdRef.current) {
+      setCompletedSteps(prev => new Set([...prev, currentStepIdRef.current!]));
+    }
+    
+    // Update current step
+    setCurrentStepId(stepId);
+    currentStepIdRef.current = stepId;
+  }, []);
+
   const { status, latency, startCall, endCall, isSupported } = useRealtimeAudio({
     onTranscript: handleTranscript,
     onStatusChange: handleStatusChange,
     onError: handleError,
+    onStepChange: handleProgrammaticStepChange,
   });
 
   // Generate/convert custom script - returns script content, greeting, and variables
@@ -349,14 +365,36 @@ function App() {
     setCallbackReasons([]);
 
     const systemPrompt = getCallSystemPrompt();
+    
+    // In programmatic mode, use a simpler system prompt (LLM just speaks what it's told)
+    let promptToUse = systemPrompt;
+    if (scriptSettings.flowControlMode === 'programmatic') {
+      // Get the greeting with patient name substituted
+      let greeting = scriptSettings.generatedGreeting || 'Hello, this is Penn Medicine calling.';
+      const nameToUse = patientName?.trim() || '';
+      if (nameToUse) {
+        greeting = greeting.replace(/\[patient_name\]/gi, nameToUse);
+      } else {
+        greeting = greeting.replace(/,?\s*\[patient_name\],?/gi, '');
+        greeting = greeting.replace(/Hi\s+,/g, 'Hello,');
+      }
+      
+      // Get the first question from flow map
+      const firstQuestion = activeFlowMap?.steps?.[0]?.question;
+      
+      promptToUse = getProgrammaticSystemPrompt(greeting, firstQuestion);
+    }
+    
     startCall(
       patientName || undefined, 
-      systemPrompt, 
+      promptToUse, 
       scriptSettings.voice, 
       scriptSettings.mode,
-      scriptSettings.variableValues || {}
+      scriptSettings.variableValues || {},
+      scriptSettings.flowControlMode,
+      activeFlowMap
     );
-  }, [patientName, scriptSettings, getCallSystemPrompt, startCall]);
+  }, [patientName, scriptSettings, getCallSystemPrompt, startCall, activeFlowMap]);
 
   // End current call
   const handleEndCall = useCallback(() => {
