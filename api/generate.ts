@@ -122,16 +122,16 @@ async function handleMultiStepConversion(req: VercelRequest, res: VercelResponse
   try {
     console.log('[multi-step] Starting multi-step conversion...');
     
-    // Step 1: Parse SMS JSON to extract structured elements
-    const parsedElements = parseSmsJson(script);
-    console.log(`[multi-step] Step 1: Parsed ${parsedElements.length} elements`);
+    // Step 1: Parse SMS JSON + context to extract structured elements
+    const { elements: parsedElements, context } = parseSmsInput(script);
+    console.log(`[multi-step] Step 1: Parsed ${parsedElements.length} elements from input${context ? ' (with context)' : ''}`);
     
-    // Step 2: Build flow map using LLM (understands complex visibleIf logic)
-    const flowMap = await buildFlowWithLLM(parsedElements, apiKey);
+    // Step 2: Build flow map using LLM (understands complex visibleIf logic + context)
+    const flowMap = await buildFlowWithLLM(parsedElements, apiKey, context);
     console.log(`[multi-step] Step 2: Built flow with ${flowMap.steps.length} steps`);
     
     // Step 3: Adapt text for voice using LLM (preserves original wording)
-    const adaptedTexts = await adaptTextWithLLM(parsedElements, apiKey);
+    const adaptedTexts = await adaptTextWithLLM(parsedElements, apiKey, context);
     console.log(`[multi-step] Step 3: Adapted ${Object.keys(adaptedTexts).length} texts`);
     
     // Step 4: Assemble final result
@@ -147,51 +147,156 @@ async function handleMultiStepConversion(req: VercelRequest, res: VercelResponse
   }
 }
 
-// Step 1: Parse SMS JSON into structured elements
-function parseSmsJson(script: string): Array<{
-  id: string;
-  type: 'radiogroup' | 'html' | 'text';
-  name: string;
-  title?: string;
-  html?: string;
-  choices?: Array<{ value: string; text: string }>;
-  visibleIf?: string;
-}> {
+// Step 1: Parse input that may contain context text + one or more JSON blocks
+function parseSmsInput(script: string): {
+  elements: Array<{
+    id: string;
+    type: string;
+    name: string;
+    title?: string;
+    html?: string;
+    choices?: Array<{ value: string; text: string }>;
+    visibleIf?: string;
+    stepLabel?: string; // e.g., "Step 1", "Step 2"
+  }>;
+  context: string; // Non-JSON context text (program description, etc.)
+} {
+  const allElements: any[] = [];
+  let context = '';
+
+  // Try parsing as pure JSON first
   try {
-    const json = JSON.parse(script);
+    const json = JSON.parse(script.trim());
     const elements = json.pages?.[0]?.elements || [];
-    
-    return elements.map((el: any) => ({
-      id: el.name,
-      type: el.type,
-      name: el.name,
-      title: el.title,
-      html: el.html,
-      choices: el.choices,
-      visibleIf: el.visibleIf,
-    }));
-  } catch (error) {
-    throw new Error('Failed to parse SMS JSON: ' + (error instanceof Error ? error.message : ''));
+    return {
+      elements: elements.map((el: any) => ({
+        id: el.name,
+        type: el.type,
+        name: el.name,
+        title: el.title,
+        html: el.html,
+        choices: el.choices,
+        visibleIf: el.visibleIf,
+      })),
+      context: '',
+    };
+  } catch {
+    // Not pure JSON - extract JSON blocks and context
   }
+
+  // Extract all JSON blocks from the mixed input
+  const jsonBlocks: { json: any; startIdx: number; endIdx: number; label: string }[] = [];
+  let searchIdx = 0;
+  
+  while (searchIdx < script.length) {
+    // Find next opening brace that starts a top-level JSON object
+    const braceIdx = script.indexOf('{', searchIdx);
+    if (braceIdx === -1) break;
+    
+    // Try to find the matching closing brace
+    let depth = 0;
+    let endIdx = -1;
+    for (let i = braceIdx; i < script.length; i++) {
+      if (script[i] === '{') depth++;
+      else if (script[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          endIdx = i;
+          break;
+        }
+      }
+    }
+    
+    if (endIdx === -1) {
+      searchIdx = braceIdx + 1;
+      continue;
+    }
+    
+    const candidate = script.slice(braceIdx, endIdx + 1);
+    try {
+      const parsed = JSON.parse(candidate);
+      // Check if it looks like a survey JSON (has pages/elements)
+      if (parsed.pages || parsed.elements) {
+        // Look for a step label before this JSON block (e.g., "Step 1:")
+        const textBefore = script.slice(Math.max(0, braceIdx - 100), braceIdx);
+        const stepMatch = textBefore.match(/(?:step\s*(\d+))[:\s]*$/i);
+        const label = stepMatch ? `Step ${stepMatch[1]}` : '';
+        
+        jsonBlocks.push({ json: parsed, startIdx: braceIdx, endIdx, label });
+      }
+      searchIdx = endIdx + 1;
+    } catch {
+      searchIdx = braceIdx + 1;
+    }
+  }
+
+  if (jsonBlocks.length === 0) {
+    throw new Error('No valid SMS JSON blocks found in input. Expected JSON with "pages" and "elements".');
+  }
+
+  // Extract context: everything that isn't inside a JSON block
+  let lastEnd = 0;
+  const contextParts: string[] = [];
+  for (const block of jsonBlocks) {
+    const before = script.slice(lastEnd, block.startIdx).trim();
+    if (before) contextParts.push(before);
+    lastEnd = block.endIdx + 1;
+  }
+  const trailing = script.slice(lastEnd).trim();
+  if (trailing) contextParts.push(trailing);
+  context = contextParts.join('\n').trim();
+
+  // Extract elements from all JSON blocks
+  for (const block of jsonBlocks) {
+    const elements = block.json.pages?.[0]?.elements || block.json.elements || [];
+    for (const el of elements) {
+      allElements.push({
+        id: el.name,
+        type: el.type,
+        name: el.name,
+        title: el.title,
+        html: el.html,
+        choices: el.choices,
+        visibleIf: el.visibleIf,
+        stepLabel: block.label,
+      });
+    }
+  }
+
+  if (allElements.length === 0) {
+    throw new Error('No elements found in JSON blocks.');
+  }
+
+  console.log(`[multi-step] Extracted ${allElements.length} elements from ${jsonBlocks.length} JSON block(s), context: ${context.length} chars`);
+
+  return { elements: allElements, context };
 }
 
 // Step 2: Build flow map using LLM
-async function buildFlowWithLLM(elements: any[], apiKey: string): Promise<any> {
-  const prompt = `You are a flow map builder. Given SMS survey elements, create a flow map showing how they connect.
+async function buildFlowWithLLM(elements: any[], apiKey: string, context: string = ''): Promise<any> {
+  const contextSection = context 
+    ? `\nPROGRAM CONTEXT (provided by user - use this to understand the purpose and flow):\n${context}\n` 
+    : '';
 
+  const prompt = `You are a flow map builder. Given SMS survey elements, create a flow map showing how they connect.
+${contextSection}
 ELEMENTS:
 ${elements.map((el, idx) => `
-Element ${idx + 1}: ${el.name} (${el.type})
+Element ${idx + 1}: ${el.name} (${el.type})${el.stepLabel ? ` [${el.stepLabel}]` : ''}
 ${el.title ? `Title: "${el.title}"` : ''}
 ${el.html ? `HTML: "${el.html}"` : ''}
-${el.choices ? `Choices: ${el.choices.map((c: any) => c.text).join(', ')}` : ''}
+${el.choices ? `Choices: ${el.choices.map((c: any) => `${c.value}="${c.text}"`).join(', ')}` : ''}
 ${el.visibleIf ? `Visible if: ${el.visibleIf}` : 'Entry point (no condition)'}
 `).join('\n')}
 
 TASK: Create a flow map JSON showing:
-1. Parse visibleIf conditions (e.g., "{Info}=1" means shown when Info was option 1)
-2. Map which options lead to which next steps
+1. Parse visibleIf conditions (e.g., "{Info}=1" means shown when Info choice value was "1")
+2. Map which options lead to which next steps based on visibleIf references
 3. Identify entry points (no visibleIf) and terminals (no outgoing links)
+4. If there are multiple JSON blocks (e.g., Step 1, Step 2), connect them - the last element of Step 1 that links to Step 2 should flow into Step 2's first element
+5. For "html" type elements (info-only), make them type "statement" with a single option: {"label": "continue", "next": "next_step_id"}
+6. For "text" type elements (free-text input), make them type "question" - the patient will answer freely
+7. ALWAYS include a "closing" step at the end with a goodbye message
 
 Return ONLY valid JSON:
 {
@@ -200,11 +305,11 @@ Return ONLY valid JSON:
     {
       "id": "step_id (snake_case of element name)",
       "label": "Human readable label",
-      "type": "question",
-      "question": "Temporary placeholder text",
+      "type": "question or statement",
+      "question": "The text content from the element",
       "info": "",
       "options": [
-        {"label": "Option text", "keywords": ["yes", "yeah"], "next": "next_step_id or end_call"}
+        {"label": "Option text", "keywords": ["keyword1", "keyword2"], "next": "next_step_id or end_call"}
       ]
     }
   ]
@@ -212,8 +317,10 @@ Return ONLY valid JSON:
 
 CRITICAL: 
 - Ensure all "next" values point to valid step IDs or "end_call"
-- Terminal steps (no outgoing visibleIf) should have options pointing to "end_call"
-- Entry points come first in the flow`;
+- Terminal steps should lead to a closing step, and closing leads to "end_call"
+- Entry points come first in the flow
+- Include ALL elements from ALL JSON blocks in the flow
+- step ID = snake_case of the element name`;
 
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -250,36 +357,41 @@ CRITICAL:
 }
 
 // Step 3: Adapt text for voice using LLM
-async function adaptTextWithLLM(elements: any[], apiKey: string): Promise<Record<string, string>> {
+async function adaptTextWithLLM(elements: any[], apiKey: string, context: string = ''): Promise<Record<string, string>> {
   const textsToAdapt = elements.map((el, idx) => `
-${idx + 1}. ${el.name}:
+${idx + 1}. ${el.name}${el.stepLabel ? ` [${el.stepLabel}]` : ''}:
 Type: ${el.type}
 ${el.title ? `Text: "${el.title}"` : ''}
 ${el.html ? `Text: "${el.html}"` : ''}
 ${el.choices ? `Options: ${el.choices.map((c: any) => c.text).join(', ')}` : ''}`).join('\n');
 
-  const prompt = `You adapt SMS text for voice calls. Keep original wording, just make minimal changes for voice.
+  const contextSection = context 
+    ? `\nPROGRAM CONTEXT:\n${context}\n` 
+    : '';
 
+  const prompt = `You adapt SMS text for voice calls. Keep original wording, just make minimal changes for voice.
+${contextSection}
 TEXTS TO ADAPT:
 ${textsToAdapt}
 
 RULES:
 1. PRESERVE ORIGINAL WORDING - Keep text almost identical, just:
    - Remove URLs
-   - Remove "Text 1 for X" instructions
+   - Remove "Text 1 for X" / "Respond with the NUMBER ONLY" instructions
    - Replace "text MAIL" with "say mail"
-2. NO NUMBERS - Convert to natural language:
-   - Binary: "Would you like X, or are you not interested?"
-   - Multiple: "You can say: [option A], [option B], or [option C]"
+   - Replace "text Y for Yes or N for No" with natural questions
+2. NO NUMBERS - Convert number-based choices to natural language. Read options conversationally.
 3. GREETING - ALWAYS include [patient_name] in the first element/greeting:
    - If text has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
-   - If no greeting: start with "Hi [patient_name], this is Penn Medicine calling..."
-4. NATURAL CONVERSATION - Make it feel like a real conversation:
-   - After patient responds, acknowledge: "Got it.", "I understand.", "Thank you."
-   - Before asking next question, transition smoothly
-   - Use warm, human language
-5. For each choice list, read options naturally in conversational way
-6. IMPORTANT: Every question should naturally include an acknowledgment space for the previous response (except the first question)
+   - If no greeting: start with "Hi [patient_name], ..."
+   - NEVER duplicate greetings
+4. ACKNOWLEDGMENTS - Every element except the first should start with a brief acknowledgment of the patient's previous response:
+   - "Got it.", "I understand.", "Thank you.", "Thanks for letting us know."
+5. VARIABLES - Replace ALL_CAPS variables with [lowercase_snake_case] placeholders:
+   - PARTICIPANT_STREET_ADDRESS → [street_address]
+   - PARTICIPANT_CITY → [city]
+   - {{@practice_number}} → [practice_number]
+6. Use warm, conversational language throughout
 
 Return ONLY valid JSON mapping element names to adapted text:
 {
@@ -323,18 +435,34 @@ Return ONLY valid JSON mapping element names to adapted text:
 
 // Step 4: Assemble final result
 function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elements: any[]): any {
+  // Build a lookup: try step.id, then original element name, then case-insensitive match
+  const findAdaptedText = (stepId: string): string | null => {
+    if (adaptedTexts[stepId]) return adaptedTexts[stepId];
+    // Try finding by original element name (adaptedTexts keys are element names from the LLM)
+    const lowerStepId = stepId.toLowerCase();
+    for (const [key, value] of Object.entries(adaptedTexts)) {
+      if (key.toLowerCase() === lowerStepId) return value;
+      // Also try matching snake_case step id to camelCase/PascalCase element name
+      const keySnake = key.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase();
+      if (keySnake === lowerStepId) return value;
+    }
+    return null;
+  };
+
   // Update flow map steps with adapted text
   const updatedSteps = flowMap.steps.map((step: any) => {
-    const adaptedText = adaptedTexts[step.id];
+    const adaptedText = findAdaptedText(step.id);
     return {
       ...step,
       question: adaptedText || step.question,
     };
   });
 
-  // Extract variables from adapted texts
+  // Extract variables from all adapted texts + step questions
   const variables = new Set<string>();
-  Object.values(adaptedTexts).forEach(text => {
+  const allTexts = [...Object.values(adaptedTexts), ...updatedSteps.map((s: any) => s.question)];
+  allTexts.forEach(text => {
+    if (typeof text !== 'string') return;
     const matches = text.match(/\[([a-z_]+)\]/g);
     if (matches) {
       matches.forEach(match => {
@@ -348,13 +476,15 @@ function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elem
 
   // Detect greeting (first element's adapted text if it's an entry point)
   const firstElement = elements.find(el => !el.visibleIf);
-  const greeting = firstElement ? adaptedTexts[firstElement.name] || 'Hello from Penn Medicine.' : 'Hello from Penn Medicine.';
+  const greeting = firstElement 
+    ? (adaptedTexts[firstElement.name] || adaptedTexts[firstElement.id] || 'Hello [patient_name], this is Penn Medicine calling.') 
+    : 'Hello [patient_name], this is Penn Medicine calling.';
 
   // Build script content
   const scriptContent = updatedSteps.map((step: any) => {
-    const optionsText = step.options.map((opt: any) => 
+    const optionsText = step.options?.map((opt: any) => 
       `- If ${opt.label}: go to ${opt.next}${opt.triggers_callback ? ' (callback)' : ''}`
-    ).join('\n');
+    ).join('\n') || '';
     
     return `STEP ${step.id} - ${step.label}:\n${step.question}\n${optionsText}\n`;
   }).join('\n');
