@@ -59,7 +59,7 @@ PLACEHOLDER HANDLING:
 export function buildFullSystemPrompt(
   scriptContent: string,
   greeting?: string,
-  flowMap?: { title: string; steps: Array<{ id: string; label: string; question: string; options: Array<{ label: string; next: string }> }> }
+  flowMap?: { title: string; steps: Array<{ id: string; label: string; type?: string; question: string; options: Array<{ label: string; next: string }> }> }
 ): string {
   let fullPrompt = BASE_SYSTEM_PROMPT;
   

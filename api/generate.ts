@@ -309,7 +309,8 @@ TASK: Create a flow map JSON showing:
 4. If there are multiple JSON blocks (e.g., Step 1, Step 2), connect them - the last element of Step 1 that links to Step 2 should flow into Step 2's first element
 5. For "html" type elements (info-only), make them type "statement" with a single option: {"label": "continue", "next": "next_step_id"}
 6. For "text" type elements (free-text input), make them type "question" - the patient will answer freely
-7. ALWAYS include a "closing" step at the end with a goodbye message
+7. ALWAYS include a "closing" step at the end with type "statement", question: "Thank you for your time. Take care, goodbye!" and options: [{"label": "end", "next": "end_call"}]
+8. The closing step must NOT contain any SMS-specific text like "Reply STOP to opt out" - this is a voice call, not SMS
 
 Return ONLY valid JSON:
 {
@@ -493,17 +494,56 @@ function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elem
 
   // Detect greeting (first element's adapted text if it's an entry point)
   const firstElement = elements.find(el => !el.visibleIf);
-  const greeting = firstElement 
+  let greeting = firstElement 
     ? (adaptedTexts[firstElement.name] || adaptedTexts[firstElement.id] || 'Hello [patient_name], this is Penn Medicine calling.') 
     : 'Hello [patient_name], this is Penn Medicine calling.';
+  
+  // Ensure greeting has [patient_name] - if the LLM didn't include it, prepend it
+  if (!greeting.toLowerCase().includes('[patient_name]')) {
+    greeting = `Hello [patient_name], ` + greeting.charAt(0).toLowerCase() + greeting.slice(1);
+    console.log('[multi-step] Greeting was missing [patient_name], prepended it');
+  }
 
-  // Build script content
+  // Clean up closing step - remove SMS-specific phrases
+  for (const step of updatedSteps) {
+    if (step.id === 'closing' || step.label?.toLowerCase().includes('closing') || step.label?.toLowerCase().includes('goodbye')) {
+      if (step.question) {
+        // Remove "Reply STOP to opt out of messages" and similar SMS text
+        step.question = step.question
+          .replace(/\.?\s*Reply STOP to opt out of messages\.?/gi, '')
+          .replace(/\.?\s*Text STOP to opt out\.?/gi, '')
+          .replace(/\.?\s*Reply STOP.*$/gi, '')
+          .trim();
+        // If closing is now empty or too short, give a default
+        if (!step.question || step.question.length < 10) {
+          step.question = 'Thank you for your time. Take care, goodbye!';
+        }
+        // Make sure closing ends with goodbye if it doesn't
+        if (!step.question.toLowerCase().includes('goodbye') && !step.question.toLowerCase().includes('bye')) {
+          step.question += ' Goodbye.';
+        }
+      }
+    }
+  }
+
+  // Build script content - clearly mark statement vs question steps
   const scriptContent = updatedSteps.map((step: any) => {
-    const optionsText = step.options?.map((opt: any) => 
-      `- If ${opt.label}: go to ${opt.next}${opt.triggers_callback ? ' (callback)' : ''}`
-    ).join('\n') || '';
+    const isStatement = step.type === 'statement';
+    const typeTag = isStatement ? ' [STATEMENT - auto-continue, do NOT wait for response]' : ' [QUESTION - wait for patient response]';
     
-    return `STEP ${step.id} - ${step.label}:\n${step.question}\n${optionsText}\n`;
+    let optionsText: string;
+    if (isStatement) {
+      // Statement steps: show auto-continue direction clearly
+      const nextStep = step.options?.[0]?.next || 'end_call';
+      optionsText = `→ Then IMMEDIATELY continue to: ${nextStep}`;
+    } else {
+      // Question steps: show response options
+      optionsText = step.options?.map((opt: any) => 
+        `- If patient says "${opt.label}": go to ${opt.next}${opt.triggers_callback ? ' (callback)' : ''}`
+      ).join('\n') || '';
+    }
+    
+    return `STEP ${step.id} - ${step.label}${typeTag}:\n"${step.question}"\n${optionsText}\n`;
   }).join('\n');
 
   return {

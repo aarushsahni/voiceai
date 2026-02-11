@@ -197,29 +197,54 @@ export function inferFlowStep(
 
   const text = lastAssistant.text.toLowerCase();
 
-  // Check each step's question for a match
+  // Check for closing/goodbye first (high priority)
+  if (text.includes('goodbye') || text.includes('take care') || text.includes('bye')) {
+    // Check if there's a closing step in the flow
+    const closingStep = flowMap.steps.find(s => 
+      s.id === 'closing' || s.id === 'end_call' || s.label?.toLowerCase().includes('closing') || s.label?.toLowerCase().includes('goodbye')
+    );
+    if (closingStep) return closingStep.id;
+    return 'end_call';
+  }
+
+  // Score each step by how many significant words from its question appear in the assistant text
+  let bestMatch: { id: string; score: number } | null = null;
+  
   for (const step of flowMap.steps) {
-    const questionWords = step.question.toLowerCase().split(' ').slice(0, 5);
-    const matches = questionWords.filter(w => w.length > 3 && text.includes(w));
-    if (matches.length >= 2) {
-      return step.id;
+    // Get significant words from the step question (skip short words, placeholders)
+    const questionText = step.question
+      .replace(/\[[a-z_]+\]/gi, '') // Remove [placeholders] which won't be in spoken text
+      .toLowerCase();
+    
+    const significantWords = questionText
+      .split(/\s+/)
+      .filter(w => w.length > 3) // Only words longer than 3 chars
+      .filter(w => !['this', 'that', 'with', 'your', 'have', 'been', 'from', 'will', 'please', 'would', 'thank', 'thanks'].includes(w)); // Skip very common words
+    
+    if (significantWords.length === 0) continue;
+    
+    const matchCount = significantWords.filter(w => text.includes(w)).length;
+    const score = matchCount / significantWords.length; // Percentage match
+    
+    // Require at least 2 matches AND at least 20% match rate
+    if (matchCount >= 2 && score > 0.2) {
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { id: step.id, score };
+      }
     }
   }
 
-  // Fallback: check for keywords
+  if (bestMatch) {
+    console.log(`[inferFlowStep] Best match: "${bestMatch.id}" (score: ${(bestMatch.score * 100).toFixed(0)}%)`);
+    return bestMatch.id;
+  }
+
+  // Fallback: check for generic keywords
   if (text.includes('english') || text.includes('español')) return 'language';
   if (text.includes('correct') || text.includes('records show')) return 'confirm';
   if (text.includes('feeling') || text.includes('concern')) return 'general_status';
   if (text.includes('why did you leave')) return 'reason';
   if (text.includes('where did you go')) return 'disposition';
-  
-  // Check for closing/end_call by common phrases (even when paraphrased)
-  if (text.includes('goodbye') || text.includes('take care') || text.includes('bye')) {
-    return 'end_call';
-  }
-  if (text.includes('anything else') || text.includes('help you with')) {
-    return 'closing';
-  }
 
   return null;
 }

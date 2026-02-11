@@ -52,12 +52,44 @@ function App() {
   });
 
   // Active flow map - use custom if available and selected, otherwise default
+  // Apply variable substitutions so step questions match what the assistant actually says
   const activeFlowMap = useMemo(() => {
-    if (scriptSettings.scriptChoice === 'custom' && customFlowMap) {
-      return customFlowMap;
-    }
-    return defaultFlowMap;
-  }, [scriptSettings.scriptChoice, customFlowMap]);
+    const baseMap = (scriptSettings.scriptChoice === 'custom' && customFlowMap) 
+      ? customFlowMap 
+      : defaultFlowMap;
+    
+    // Substitute placeholders in the flow map for accurate step inference and matching
+    const nameToUse = patientName?.trim() || '';
+    const variableValues = scriptSettings.variableValues || {};
+    
+    const substituteText = (text: string): string => {
+      let result = text;
+      // Replace [patient_name]
+      if (nameToUse) {
+        result = result.replace(/\[patient_name\]/gi, nameToUse);
+      } else {
+        result = result.replace(/\[patient_name\]\s*/gi, '');
+      }
+      // Replace other variables
+      for (const [varName, value] of Object.entries(variableValues)) {
+        if (value) {
+          result = result.replace(new RegExp(`\\[${varName}\\]`, 'gi'), value);
+        }
+      }
+      // Remove any remaining placeholders
+      result = result.replace(/\[[a-z_]+\]/gi, '');
+      return result;
+    };
+
+    return {
+      ...baseMap,
+      steps: baseMap.steps.map(step => ({
+        ...step,
+        question: substituteText(step.question),
+        info: substituteText(step.info || ''),
+      })),
+    };
+  }, [scriptSettings.scriptChoice, customFlowMap, patientName, scriptSettings.variableValues]);
 
   // LLM-based answer matching (same as voice5.py match_answer_with_llm)
   const matchAnswerWithLLM = useCallback(async (
@@ -357,17 +389,18 @@ function App() {
     
     // Debug: log the full system prompt so we can verify substitutions and flow
     console.log('[debug] ===== SYSTEM PROMPT SENT TO CALL =====');
-    console.log('[debug] Patient name:', patientName || '(none)');
+    console.log('[debug] Patient name from state:', JSON.stringify(patientName));
+    console.log('[debug] Patient name trimmed:', JSON.stringify(patientName?.trim()));
     console.log('[debug] Variable values:', JSON.stringify(scriptSettings.variableValues));
+    console.log('[debug] Generated greeting:', JSON.stringify(scriptSettings.generatedGreeting));
     console.log('[debug] Prompt length:', systemPrompt.length);
     console.log('[debug] Contains [patient_name]:', systemPrompt.includes('[patient_name]'));
     console.log('[debug] Contains [street_address]:', systemPrompt.includes('[street_address]'));
-    console.log('[debug] First 500 chars:', systemPrompt.substring(0, 500));
-    console.log('[debug] BRANCHING RULES section:', 
-      systemPrompt.includes('BRANCHING RULES') 
-        ? systemPrompt.substring(systemPrompt.indexOf('BRANCHING RULES'), systemPrompt.indexOf('BRANCHING RULES') + 1000) 
-        : '(no branching rules found)'
-    );
+    // Find and log the GREETING line
+    const greetingLineMatch = systemPrompt.match(/GREETING.*?\n.*?\n/s);
+    console.log('[debug] Greeting in prompt:', greetingLineMatch?.[0] || '(not found)');
+    console.log('[debug] ===== FULL SYSTEM PROMPT =====');
+    console.log(systemPrompt);
     console.log('[debug] ===== END SYSTEM PROMPT =====');
     
     startCall(
