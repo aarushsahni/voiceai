@@ -77,15 +77,29 @@ export function buildFullSystemPrompt(
     fullPrompt += `After each patient response, go to the NEXT STEP indicated below:\n\n`;
     
     for (const step of flowMap.steps) {
-      fullPrompt += `STEP "${step.id}" (${step.label}):\n`;
-      fullPrompt += `  Question: "${step.question}"\n`;
-      for (const option of step.options) {
-        fullPrompt += `  - If patient says "${option.label}" → GO TO STEP "${option.next}"\n`;
+      const stepType = (step as any).type || 'question';
+      fullPrompt += `STEP "${step.id}" (${step.label}) [${stepType}]:\n`;
+      fullPrompt += `  Say: "${step.question}"\n`;
+      
+      if (stepType === 'statement') {
+        // Statement steps auto-continue - no patient response needed
+        const nextStep = step.options?.[0]?.next;
+        if (nextStep) {
+          fullPrompt += `  → AUTO-CONTINUE: Say this text, then IMMEDIATELY go to STEP "${nextStep}" (do NOT wait for patient response)\n`;
+        }
+      } else {
+        // Question steps wait for response
+        for (const option of step.options) {
+          fullPrompt += `  - If patient says "${option.label}" → GO TO STEP "${option.next}"\n`;
+        }
       }
       fullPrompt += `\n`;
     }
     
-    fullPrompt += `IMPORTANT: You MUST follow these branching rules exactly. When patient responds, identify which option matches and go to the indicated next step.\n`;
+    fullPrompt += `IMPORTANT: You MUST follow these branching rules exactly.\n`;
+    fullPrompt += `- For "question" steps: Ask, then WAIT for response, then go to the matching next step.\n`;
+    fullPrompt += `- For "statement" steps: Say the text, then IMMEDIATELY continue to the next step WITHOUT waiting. Combine them in the same response.\n`;
+    fullPrompt += `- When patient responds, identify which option matches and go to the indicated next step.\n`;
   }
   
   return fullPrompt;

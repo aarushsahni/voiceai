@@ -129,14 +129,27 @@ async function handleMultiStepConversion(req: VercelRequest, res: VercelResponse
     // Step 2: Build flow map using LLM (understands complex visibleIf logic + context)
     const flowMap = await buildFlowWithLLM(parsedElements, apiKey, context);
     console.log(`[multi-step] Step 2: Built flow with ${flowMap.steps.length} steps`);
+    // Debug: log each step's connections
+    for (const step of flowMap.steps) {
+      const optionsSummary = step.options?.map((o: any) => `"${o.label}" → ${o.next}`).join(', ') || 'none';
+      console.log(`[multi-step]   ${step.id} (${step.type}): ${optionsSummary}`);
+    }
     
     // Step 3: Adapt text for voice using LLM (preserves original wording)
     const adaptedTexts = await adaptTextWithLLM(parsedElements, apiKey, context);
     console.log(`[multi-step] Step 3: Adapted ${Object.keys(adaptedTexts).length} texts`);
+    // Debug: log adapted text keys vs element names
+    console.log(`[multi-step]   Element names: ${parsedElements.map(e => e.name).join(', ')}`);
+    console.log(`[multi-step]   Adapted keys:  ${Object.keys(adaptedTexts).join(', ')}`);
     
     // Step 4: Assemble final result
     const result = assembleResult(flowMap, adaptedTexts, parsedElements);
     console.log('[multi-step] Step 4: Assembled final result');
+    console.log(`[multi-step]   Greeting: "${result.greeting?.substring(0, 100)}..."`);
+    console.log(`[multi-step]   Variables: ${JSON.stringify(result.variables)}`);
+    console.log(`[multi-step]   Flow steps: ${result.flowMap?.steps?.length}`);
+    // Check for [patient_name] in greeting
+    console.log(`[multi-step]   Greeting has [patient_name]: ${result.greeting?.includes('[patient_name]')}`);
     
     return res.status(200).json(result);
   } catch (error) {
@@ -376,22 +389,26 @@ ${textsToAdapt}
 
 RULES:
 1. PRESERVE ORIGINAL WORDING - Keep text almost identical, just:
-   - Remove URLs
+   - Remove URLs (https://...)
    - Remove "Text 1 for X" / "Respond with the NUMBER ONLY" instructions
    - Replace "text MAIL" with "say mail"
    - Replace "text Y for Yes or N for No" with natural questions
-2. NO NUMBERS - Convert number-based choices to natural language. Read options conversationally.
-3. GREETING - ALWAYS include [patient_name] in the first element/greeting:
+2. REMOVE SMS-SPECIFIC PHRASES - Remove things that don't make sense on a phone call:
+   - Remove "Reply STOP to opt out of messages" or similar opt-out SMS text
+   - Remove "text us" → replace with "tell us" or "let us know"
+   - Remove any reference to texting, SMS, messaging
+3. NO NUMBERS - Convert number-based choices to natural language. Read options conversationally.
+4. GREETING - ALWAYS include [patient_name] in the first element/greeting:
    - If text has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
    - If no greeting: start with "Hi [patient_name], ..."
    - NEVER duplicate greetings
-4. ACKNOWLEDGMENTS - Every element except the first should start with a brief acknowledgment of the patient's previous response:
+5. ACKNOWLEDGMENTS - Every element except the first should start with a brief acknowledgment of the patient's previous response:
    - "Got it.", "I understand.", "Thank you.", "Thanks for letting us know."
-5. VARIABLES - Replace ALL_CAPS variables with [lowercase_snake_case] placeholders:
+6. VARIABLES - Replace ALL_CAPS variables with [lowercase_snake_case] placeholders:
    - PARTICIPANT_STREET_ADDRESS → [street_address]
    - PARTICIPANT_CITY → [city]
    - {{@practice_number}} → [practice_number]
-6. Use warm, conversational language throughout
+7. Use warm, conversational language throughout
 
 Return ONLY valid JSON mapping element names to adapted text:
 {
@@ -581,6 +598,10 @@ VOICE ADAPTATION (MINIMAL CHANGES ONLY):
 - Remove URLs (can't click in voice)
 - Remove "Text 1 for X or 2 for Y" → Replace with natural question
 - Replace "text MAIL" with "say mail"
+- Remove SMS-specific phrases that don't make sense on a voice call:
+  - Remove "Reply STOP to opt out of messages" or similar opt-out text
+  - Replace "text us" with "tell us" or "let us know"
+  - Remove any reference to texting, SMS, or messaging
 - Keep ALL other original wording intact
 
 === OPEN PROMPT FORMAT ===
@@ -669,7 +690,11 @@ CRITICAL RULES:
    - Remove URLs
    - Remove "Text 1 for..." instructions  
    - Replace "text MAIL" with "say mail"
-4. GREETING WITH [patient_name]:
+4. REMOVE SMS-SPECIFIC PHRASES:
+   - Remove "Reply STOP to opt out of messages" or similar opt-out text
+   - Replace "text us" with "tell us" or "let us know"  
+   - Remove any reference to texting, SMS, or messaging
+5. GREETING WITH [patient_name]:
    - ALWAYS include [patient_name] in the greeting
    - If SMS has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
    - If SMS has no greeting: start with "Hi [patient_name], this is Penn Medicine calling..."

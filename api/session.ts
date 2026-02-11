@@ -30,27 +30,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!instructions || instructions.trim().length === 0) {
       instructions = getDefaultSystemPrompt(patientName);
     } else {
+      console.log('[session] Received prompt length:', instructions.length);
+      console.log('[session] Patient name:', patientName || '(none)');
+      console.log('[session] Variable values:', JSON.stringify(variableValues));
+      console.log('[session] Prompt has [patient_name]:', instructions.includes('[patient_name]'));
+      
       // Replace [patient_name] placeholder in custom prompts
       if (patientName) {
-        // Replace with actual name
+        const beforeCount = (instructions.match(/\[patient_name\]/gi) || []).length;
         instructions = instructions.replace(/\[patient_name\]/gi, patientName);
+        console.log(`[session] Replaced ${beforeCount} [patient_name] → "${patientName}"`);
       } else {
         // No name provided - replace "Hi [patient_name]," with "Hello," or just remove the placeholder
         instructions = instructions.replace(/Hi \[patient_name\],/gi, 'Hello,');
         instructions = instructions.replace(/\[patient_name\]/gi, '');
+        console.log('[session] No patient name - removed placeholders');
       }
       
       // Replace all other variable placeholders with their values
       for (const [varName, value] of Object.entries(variableValues)) {
         if (value && typeof value === 'string') {
-          // Replace [variable_name] with the actual value
           const regex = new RegExp(`\\[${varName}\\]`, 'gi');
+          const beforeCount = (instructions.match(regex) || []).length;
           instructions = instructions.replace(regex, value);
+          console.log(`[session] Replaced ${beforeCount} [${varName}] → "${value}"`);
         }
       }
       
-      // Remove any remaining unfilled placeholders (replace with empty or generic text)
+      // Remove any remaining unfilled placeholders
+      const remainingPlaceholders = instructions.match(/\[[a-z_]+\]/gi);
+      if (remainingPlaceholders) {
+        console.log('[session] WARNING: Removing unfilled placeholders:', remainingPlaceholders);
+      }
       instructions = instructions.replace(/\[[a-z_]+\]/gi, '');
+      
+      // Log the greeting portion of the final instructions
+      const greetingMatch = instructions.match(/GREETING.*?(?=\n\n)/s);
+      console.log('[session] Final greeting section:', greetingMatch?.[0]?.substring(0, 200) || '(no greeting section)');
     }
 
     // Temperature from voice5.py: 0.6 for deterministic, 0.9 for explorative

@@ -355,6 +355,21 @@ function App() {
 
     const systemPrompt = getCallSystemPrompt();
     
+    // Debug: log the full system prompt so we can verify substitutions and flow
+    console.log('[debug] ===== SYSTEM PROMPT SENT TO CALL =====');
+    console.log('[debug] Patient name:', patientName || '(none)');
+    console.log('[debug] Variable values:', JSON.stringify(scriptSettings.variableValues));
+    console.log('[debug] Prompt length:', systemPrompt.length);
+    console.log('[debug] Contains [patient_name]:', systemPrompt.includes('[patient_name]'));
+    console.log('[debug] Contains [street_address]:', systemPrompt.includes('[street_address]'));
+    console.log('[debug] First 500 chars:', systemPrompt.substring(0, 500));
+    console.log('[debug] BRANCHING RULES section:', 
+      systemPrompt.includes('BRANCHING RULES') 
+        ? systemPrompt.substring(systemPrompt.indexOf('BRANCHING RULES'), systemPrompt.indexOf('BRANCHING RULES') + 1000) 
+        : '(no branching rules found)'
+    );
+    console.log('[debug] ===== END SYSTEM PROMPT =====');
+    
     startCall(
       patientName || undefined, 
       systemPrompt, 
