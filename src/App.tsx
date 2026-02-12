@@ -244,13 +244,18 @@ function App() {
       } else if (entry.role === 'user') {
         // Use ref for latest step ID (handles rapid updates)
         const stepId = currentStepIdRef.current;
+        console.log(`[match] User said: "${entry.text}", current step: "${stepId}"`);
         if (stepId) {
           // Use LLM matching for better accuracy (async, won't block conversation)
           const step = activeFlowMap.steps.find(s => s.id === stepId);
           if (step) {
-            console.log(`[match] Using LLM to match response for step ${stepId}`);
+            console.log(`[match] Matching against step "${stepId}" with ${step.options.length} options: ${step.options.map(o => o.label).join(', ')}`);
             matchAnswerWithLLM(step.question, entry.text, stepId, activeFlowMap);
+          } else {
+            console.log(`[match] WARNING: Step "${stepId}" not found in flow map`);
           }
+        } else {
+          console.log(`[match] WARNING: No current step set when user spoke`);
         }
       }
 

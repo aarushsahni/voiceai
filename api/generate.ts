@@ -307,7 +307,10 @@ TASK: Create a flow map JSON showing:
 2. Map which options lead to which next steps based on visibleIf references
 3. Identify entry points (no visibleIf) and terminals (no outgoing links)
 4. If there are multiple JSON blocks (e.g., Step 1, Step 2), connect them - the last element of Step 1 that links to Step 2 should flow into Step 2's first element
-5. For "html" type elements (info-only), make them type "statement" with a single option: {"label": "continue", "next": "next_step_id"}
+5. For "html" type elements:
+   - If the text contains embedded choices or asks the user to respond (e.g., "say mail", "say call", "text MAIL or CALL"), make it type "question" with those as options - the patient needs to respond
+   - If the text is purely informational with no choices (e.g., "Thanks for letting us know. We will update our records."), make it type "statement" with a single option: {"label": "continue", "next": "next_step_id"}
+   - IMPORTANT: Read the text carefully. If there's ANY prompt for the user to choose or respond, it must be a "question", not a "statement"
 6. For "text" type elements (free-text input), make them type "question" - the patient will answer freely
 7. ALWAYS include a "closing" step at the end with type "statement", question: "Thank you for your time. Take care, goodbye!" and options: [{"label": "end", "next": "end_call"}]
 8. The closing step must NOT contain any SMS-specific text like "Reply STOP to opt out" - this is a voice call, not SMS
@@ -403,8 +406,9 @@ RULES:
    - If text has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
    - If no greeting: start with "Hi [patient_name], ..."
    - NEVER duplicate greetings
-5. ACKNOWLEDGMENTS - Every element except the first should start with a brief acknowledgment of the patient's previous response:
-   - "Got it.", "I understand.", "Thank you.", "Thanks for letting us know."
+5. ACKNOWLEDGMENTS - Only add acknowledgments to elements that FOLLOW a patient response (i.e., elements triggered by a user choice via visibleIf). Do NOT add acknowledgments to elements that auto-continue from a statement.
+   - Use brief phrases: "Got it.", "I understand.", "Thank you.", "Thanks for letting us know."
+   - Do NOT add duplicate acknowledgments - if the next step already starts with an acknowledgment, don't prepend another one
 6. VARIABLES - Replace ALL_CAPS variables with [lowercase_snake_case] placeholders:
    - PARTICIPANT_STREET_ADDRESS → [street_address]
    - PARTICIPANT_CITY → [city]

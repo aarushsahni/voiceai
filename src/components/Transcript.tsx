@@ -9,9 +9,11 @@ interface TranscriptProps {
 export function Transcript({ entries }: TranscriptProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom on new entries
+  // Auto-scroll to bottom on new entries (only during active call)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (entries.length > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [entries]);
 
   const formatTime = (date: Date) => {
