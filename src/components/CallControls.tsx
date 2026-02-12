@@ -3,8 +3,6 @@ import { CallStatus } from '../types';
 
 interface CallControlsProps {
   status: CallStatus;
-  patientName: string;
-  onPatientNameChange: (name: string) => void;
   onStartCall: () => void;
   onEndCall: () => void;
   isSupported: boolean;
@@ -12,8 +10,6 @@ interface CallControlsProps {
 
 export function CallControls({
   status,
-  patientName,
-  onPatientNameChange,
   onStartCall,
   onEndCall,
   isSupported,
@@ -33,23 +29,8 @@ export function CallControls({
       )}
 
       <div className="flex items-center gap-4">
-        {/* Patient name input */}
-        <div className="flex-1">
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Patient Name
-          </label>
-          <input
-            type="text"
-            value={patientName}
-            onChange={(e) => onPatientNameChange(e.target.value)}
-            placeholder="Enter patient name (optional)"
-            disabled={isActive}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
-          />
-        </div>
-
         {/* Call buttons */}
-        <div className="flex items-center gap-2 pt-6">
+        <div className="flex items-center gap-2">
           {!isActive ? (
             <button
               onClick={onStartCall}

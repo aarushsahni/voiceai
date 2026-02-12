@@ -8,13 +8,12 @@ import { Transcript } from './components/Transcript';
 import { FlowMap } from './components/FlowMap';
 import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
-import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
+import { CallbackAlert, checkAssistantForCallback, checkAssistantForReminder } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
 
 function App() {
-  const [patientName, setPatientName] = useState('');
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
@@ -36,6 +35,10 @@ function App() {
   // Callback tracking - flags when clinical team needs to follow up
   const [needsCallback, setNeedsCallback] = useState(false);
   const [callbackReasons, setCallbackReasons] = useState<string[]>([]);
+  
+  // Reminder tracking - flags when a reminder/follow-up was promised
+  const [needsReminder, setNeedsReminder] = useState(false);
+  const [reminderReasons, setReminderReasons] = useState<string[]>([]);
 
   // Script configuration state
   const [scriptSettings, setScriptSettings] = useState<ScriptSettings>({
@@ -50,6 +53,9 @@ function App() {
     variableValues: {},      // User-filled values for variables
     conversionMode: 'multi-step',  // Default to multi-step (more reliable)
   });
+
+  // Derive patient name from variableValues (no separate state needed)
+  const patientName = scriptSettings.variableValues.patient_name || '';
 
   // Active flow map - use custom if available and selected, otherwise default
   // Apply variable substitutions so step questions match what the assistant actually says
@@ -114,13 +120,15 @@ function App() {
 
       if (response.ok) {
         const data = await response.json();
+        console.log(`[match] Result for step "${stepId}":`, data.match, `(confidence: ${data.confidence})`);
         if (data.match) {
           // Only set match if we don't already have one for this step (avoid overwrites)
           setMatchedOptions(prev => {
             if (prev.has(stepId)) {
-              console.log(`[match] Skipping overwrite for step ${stepId}, already matched`);
+              console.log(`[match] Skipping overwrite for step ${stepId}, already matched as "${prev.get(stepId)}"`);
               return prev;
             }
+            console.log(`[match] Setting green highlight: step "${stepId}" → option "${data.match}"`);
             return new Map([...prev, [stepId, data.match]]);
           });
         }
@@ -201,6 +209,18 @@ function App() {
           setCallbackReasons(prevReasons => {
             if (!prevReasons.includes(callbackCheck.reason!)) {
               return [...prevReasons, callbackCheck.reason!];
+            }
+            return prevReasons;
+          });
+        }
+        
+        // Check if assistant promised a reminder/follow-up
+        const reminderCheck = checkAssistantForReminder(entry.text);
+        if (reminderCheck.needed && reminderCheck.reason) {
+          setNeedsReminder(true);
+          setReminderReasons(prevReasons => {
+            if (!prevReasons.includes(reminderCheck.reason!)) {
+              return [...prevReasons, reminderCheck.reason!];
             }
             return prevReasons;
           });
@@ -307,10 +327,16 @@ function App() {
         setCustomFlowMap(null);
       }
       
+      // Always include patient_name as the first variable
+      const vars = data.variables || [];
+      if (!vars.includes('patient_name')) {
+        vars.unshift('patient_name');
+      }
+      
       return {
         scriptContent: data.scriptContent || '',
         greeting: data.greeting || 'Hello, this is Penn Medicine calling.',
-        variables: data.variables || [],  // List of variable placeholders
+        variables: vars,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to generate script';
@@ -384,6 +410,8 @@ function App() {
     setCallSummary(null);
     setNeedsCallback(false);
     setCallbackReasons([]);
+    setNeedsReminder(false);
+    setReminderReasons([]);
 
     const systemPrompt = getCallSystemPrompt();
     
@@ -474,8 +502,6 @@ function App() {
         <div className="mb-6">
           <CallControls
             status={status}
-            patientName={patientName}
-            onPatientNameChange={setPatientName}
             onStartCall={handleStartCall}
             onEndCall={handleEndCall}
             isSupported={isSupported}
@@ -488,13 +514,15 @@ function App() {
           <LatencyTracker latency={latency} />
         </div>
 
-        {/* Callback Alert (prominent when callback needed) */}
-        {(needsCallback || status === 'ended') && (
+        {/* Callback/Reminder Alerts (prominent when needed) */}
+        {(needsCallback || needsReminder || status === 'ended') && (
           <div className="mb-6">
             <CallbackAlert 
               needsCallback={needsCallback} 
               reasons={callbackReasons}
               callEnded={status === 'ended'}
+              needsReminder={needsReminder}
+              reminderReasons={reminderReasons}
             />
           </div>
         )}
