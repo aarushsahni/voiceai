@@ -127,15 +127,27 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         console.log(`[match] Result for step "${stepId}":`, data.match, `(confidence: ${data.confidence})`);
-        if (data.match) {
-          // Only set match if we don't already have one for this step (avoid overwrites)
+
+        // Prefer matchedIndex because it's unambiguous and tied to the current option list.
+        let matchedLabel: string | null = null;
+        if (typeof data.matchedIndex === 'number' && data.matchedIndex >= 0 && data.matchedIndex < step.options.length) {
+          matchedLabel = step.options[data.matchedIndex].label;
+        } else if (data.match) {
+          matchedLabel = data.match;
+        } else {
+          // Fallback: local matcher for robustness if API format drifts or LLM returns no match.
+          matchedLabel = matchUserResponse(userResponse, stepId, flowMap);
+          if (matchedLabel) {
+            console.log(`[match] Fallback local match hit for step "${stepId}": "${matchedLabel}"`);
+          }
+        }
+
+        if (matchedLabel) {
           setMatchedOptions(prev => {
-            if (prev.has(stepId)) {
-              console.log(`[match] Skipping overwrite for step ${stepId}, already matched as "${prev.get(stepId)}"`);
-              return prev;
-            }
-            console.log(`[match] ✅ Setting green highlight: step "${stepId}" → option "${data.match}"`);
-            return new Map([...prev, [stepId, data.match]]);
+            const current = prev.get(stepId);
+            if (current === matchedLabel) return prev;
+            console.log(`[match] ✅ Setting green highlight: step "${stepId}" → option "${matchedLabel}"`);
+            return new Map([...prev, [stepId, matchedLabel]]);
           });
         } else {
           console.log(`[match] ❌ No match found for step "${stepId}", user said: "${userResponse}"`);
@@ -563,21 +575,12 @@ function App() {
         <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
           <h3 className="font-semibold text-blue-800 mb-2">How to use</h3>
           <ol className="list-decimal list-inside text-blue-700 text-sm space-y-1">
-            <li>Choose your conversation mode (Deterministic or Explorative)</li>
             <li>Select a script and voice, or create a custom script</li>
-            <li>Enter the patient's name (optional) and click "Start Call"</li>
+            <li>Fill any call variables (like patient name/address), then click "Start Call"</li>
             <li>Allow microphone access when prompted</li>
             <li>Speak your responses naturally - the system understands variations</li>
             <li>The call will end automatically after the closing, or click "End Call"</li>
           </ol>
-          <div className="mt-3 pt-3 border-t border-blue-200">
-            <p className="text-xs text-blue-600">
-              <strong>Deterministic mode:</strong> AI follows the script exactly (temperature 0.6). Best for compliance.
-            </p>
-            <p className="text-xs text-blue-600 mt-1">
-              <strong>Explorative mode:</strong> AI asks open-ended follow-ups (temperature 0.9). Best for gathering feedback.
-            </p>
-          </div>
           <p className="mt-3 text-xs text-blue-600">
             Note: This requires HTTPS in production. For local development, use <code className="bg-blue-100 px-1 rounded">vercel dev</code>.
           </p>
