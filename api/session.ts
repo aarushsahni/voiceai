@@ -18,9 +18,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { 
       systemPrompt, 
       voice = 'cedar', 
-      patientName, 
       mode = 'deterministic',
-      variableValues = {}  // User-filled variable values (e.g., { street_address: "123 Main St" })
+      variableValues = {}  // All variable values including patient_name
     } = req.body || {};
 
     // Use provided system prompt or fall back to default
@@ -28,46 +27,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // If no custom prompt provided, use the default
     if (!instructions || instructions.trim().length === 0) {
-      instructions = getDefaultSystemPrompt(patientName);
-    } else {
-      console.log('[session] Received prompt length:', instructions.length);
-      console.log('[session] Patient name:', patientName || '(none)');
-      console.log('[session] Variable values:', JSON.stringify(variableValues));
-      console.log('[session] Prompt has [patient_name]:', instructions.includes('[patient_name]'));
-      
-      // Replace [patient_name] placeholder in custom prompts
-      if (patientName) {
-        const beforeCount = (instructions.match(/\[patient_name\]/gi) || []).length;
-        instructions = instructions.replace(/\[patient_name\]/gi, patientName);
-        console.log(`[session] Replaced ${beforeCount} [patient_name] → "${patientName}"`);
-      } else {
-        // No name provided - replace "Hi [patient_name]," with "Hello," or just remove the placeholder
-        instructions = instructions.replace(/Hi \[patient_name\],/gi, 'Hello,');
-        instructions = instructions.replace(/\[patient_name\]/gi, '');
-        console.log('[session] No patient name - removed placeholders');
-      }
-      
-      // Replace all other variable placeholders with their values
-      for (const [varName, value] of Object.entries(variableValues)) {
-        if (value && typeof value === 'string') {
-          const regex = new RegExp(`\\[${varName}\\]`, 'gi');
-          const beforeCount = (instructions.match(regex) || []).length;
+      instructions = getDefaultSystemPrompt();
+    }
+    
+    console.log('[session] Received prompt length:', instructions.length);
+    console.log('[session] Variable values:', JSON.stringify(variableValues));
+    
+    // Replace ALL variable placeholders with their values (patient_name, street_address, etc.)
+    for (const [varName, value] of Object.entries(variableValues)) {
+      if (value && typeof value === 'string') {
+        const regex = new RegExp(`\\[${varName}\\]`, 'gi');
+        const beforeCount = (instructions.match(regex) || []).length;
+        if (beforeCount > 0) {
           instructions = instructions.replace(regex, value);
           console.log(`[session] Replaced ${beforeCount} [${varName}] → "${value}"`);
         }
       }
-      
-      // Remove any remaining unfilled placeholders
-      const remainingPlaceholders = instructions.match(/\[[a-z_]+\]/gi);
-      if (remainingPlaceholders) {
-        console.log('[session] WARNING: Removing unfilled placeholders:', remainingPlaceholders);
-      }
-      instructions = instructions.replace(/\[[a-z_]+\]/gi, '');
-      
-      // Log the greeting portion of the final instructions
-      const greetingMatch = instructions.match(/GREETING.*?(?=\n\n)/s);
-      console.log('[session] Final greeting section:', greetingMatch?.[0]?.substring(0, 200) || '(no greeting section)');
     }
+    
+    // Remove any remaining unfilled placeholders
+    const remainingPlaceholders = instructions.match(/\[[a-z0-9_]+\]/gi);
+    if (remainingPlaceholders) {
+      console.log('[session] WARNING: Removing unfilled placeholders:', remainingPlaceholders);
+    }
+    instructions = instructions.replace(/\[[a-z0-9_]+\]/gi, '');
+    // Clean up artifacts from removed placeholders
+    instructions = instructions.replace(/,\s*,/g, ',');
+    instructions = instructions.replace(/\s{2,}/g, ' ');
 
     // Temperature from voice5.py: 0.6 for deterministic, 0.9 for explorative
     const temperature = mode === 'explorative' ? 0.9 : 0.6;
@@ -126,15 +112,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-function getDefaultSystemPrompt(patientName?: string): string {
-  const greeting = patientName 
-    ? `Hi ${patientName}, this is Penn Medicine Lancaster General Health calling about your recent emergency room visit.`
-    : `Hello, this is Penn Medicine Lancaster General Health calling about your recent emergency room visit.`;
-
+function getDefaultSystemPrompt(): string {
   return `
 Penn Medicine LGH ED follow-up call. Be warm and conversational.
 
-START (say this first): "${greeting} To continue in English, please say 'English'. Para continuar en español, por favor diga 'Español'."
+START (say this first): "Hi [patient_name], this is Penn Medicine Lancaster General Health calling about your recent emergency room visit. To continue in English, please say 'English'. Para continuar en español, por favor diga 'Español'."
 
 ENGLISH FLOW:
 1. User says English → "Thank you. We care about your recovery and want to check in with you. I'll ask you a few short questions about how you're doing. Our records show you recently left the emergency department before your visit was complete. Is that correct? Please say 'Yes' or 'No'."

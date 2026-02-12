@@ -45,9 +45,9 @@ RESPONSE MATCHING:
 - If unclear, say "I didn't quite catch that" and rephrase the question
 
 PLACEHOLDER HANDLING:
-- [patient_name] - use the patient's name if provided, otherwise skip
-- [practice_number] - say the practice phone number if provided
-- [street_address], [city], [state], [postal_code] - speak the address naturally
+- All placeholders like [patient_name], [practice_number], [street_address] should already be filled in with actual values
+- If you see a placeholder that was NOT filled in (still has brackets), simply skip it naturally
+- Speak names, addresses, and numbers naturally and clearly
 
 ===== SCRIPT TO FOLLOW =====
 

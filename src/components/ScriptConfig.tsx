@@ -150,7 +150,7 @@ export function ScriptConfig({
       generatedGreeting: script.generatedGreeting,
       mode: script.mode,
       variables: script.variables || [],
-      variableValues: { patient_name: settings.variableValues.patient_name || '' }, // Preserve patient name
+      variableValues: { ...settings.variableValues }, // Preserve all variable values
     });
     if (onLoadFlowMap && script.flowMap) {
       onLoadFlowMap(script.flowMap);
@@ -206,9 +206,7 @@ export function ScriptConfig({
         generatedScriptContent: result.scriptContent,
         generatedGreeting: result.greeting,
         variables: result.variables || [],
-        variableValues: { 
-          patient_name: settings.variableValues.patient_name || '', // Preserve patient name across regenerations
-        },
+        variableValues: { ...settings.variableValues }, // Preserve all variable values across regenerations
       });
     }
   };
@@ -537,62 +535,6 @@ export function ScriptConfig({
                 </div>
               )}
 
-              {/* Variable Inputs - always show patient_name, show others after generation */}
-              {(() => {
-                // Always include patient_name, plus any generated variables
-                const allVars = settings.variables && settings.variables.length > 0 
-                  ? (settings.variables.includes('patient_name') ? settings.variables : ['patient_name', ...settings.variables])
-                  : ['patient_name'];
-                const otherVars = allVars.filter(v => v !== 'patient_name');
-                const showOtherVars = settings.generatedScriptContent && otherVars.length > 0;
-                
-                return (
-                  <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                    <label className="block text-sm font-medium text-amber-800 mb-3">
-                      Call Variables
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      {/* Patient Name - always visible */}
-                      <div>
-                        <label className="block text-xs font-medium text-amber-700 mb-1">
-                          Patient Name
-                        </label>
-                        <input
-                          type="text"
-                          value={settings.variableValues.patient_name || ''}
-                          onChange={(e) => handleVariableChange('patient_name', e.target.value)}
-                          disabled={disabled}
-                          placeholder="Enter patient name (optional)"
-                          className="w-full px-2 py-1.5 text-sm border border-amber-300 rounded focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:bg-slate-100"
-                        />
-                      </div>
-
-                      {/* Other variables - show after script generation */}
-                      {showOtherVars && otherVars.map((varName) => (
-                        <div key={varName}>
-                          <label className="block text-xs font-medium text-amber-700 mb-1">
-                            {formatVarName(varName)}
-                          </label>
-                          <input
-                            type="text"
-                            value={settings.variableValues[varName] || ''}
-                            onChange={(e) => handleVariableChange(varName, e.target.value)}
-                            disabled={disabled}
-                            placeholder={`Enter ${formatVarName(varName).toLowerCase()}...`}
-                            className="w-full px-2 py-1.5 text-sm border border-amber-300 rounded focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:bg-slate-100"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    {showOtherVars && (
-                      <p className="mt-2 text-xs text-amber-600">
-                        These values will replace [placeholders] in the script during the call.
-                      </p>
-                    )}
-                  </div>
-                );
-              })()}
-
               {/* Generated Script Preview */}
               {settings.generatedScriptContent && (
                 <div className="mt-4">
@@ -617,6 +559,47 @@ export function ScriptConfig({
               )}
             </div>
           )}
+
+          {/* Variable Inputs - shown for ALL script types */}
+          {(() => {
+            // For custom scripts: show patient_name + any generated variables
+            // For built-in scripts: show patient_name only
+            const allVars = isCustom && settings.variables && settings.variables.length > 0 
+              ? (settings.variables.includes('patient_name') ? settings.variables : ['patient_name', ...settings.variables])
+              : ['patient_name'];
+            const showAllVars = isCustom && settings.generatedScriptContent;
+            const varsToShow = showAllVars ? allVars : ['patient_name'];
+            
+            return (
+              <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <label className="block text-sm font-medium text-amber-800 mb-3">
+                  Call Variables
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {varsToShow.map((varName) => (
+                    <div key={varName}>
+                      <label className="block text-xs font-medium text-amber-700 mb-1">
+                        {formatVarName(varName)}
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.variableValues[varName] || ''}
+                        onChange={(e) => handleVariableChange(varName, e.target.value)}
+                        disabled={disabled}
+                        placeholder={varName === 'patient_name' ? 'Enter patient name (optional)' : `Enter ${formatVarName(varName).toLowerCase()}...`}
+                        className="w-full px-2 py-1.5 text-sm border border-amber-300 rounded focus:ring-2 focus:ring-amber-500 focus:border-amber-500 disabled:bg-slate-100"
+                      />
+                    </div>
+                  ))}
+                </div>
+                {varsToShow.length > 1 && (
+                  <p className="mt-2 text-xs text-amber-600">
+                    These values will replace [placeholders] in the script during the call.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
         </div>
       )}

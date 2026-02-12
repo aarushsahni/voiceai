@@ -63,9 +63,6 @@ function App() {
     conversionMode: 'multi-step',  // Default to multi-step (more reliable)
   });
 
-  // Derive patient name from variableValues (no separate state needed)
-  const patientName = scriptSettings.variableValues.patient_name || '';
-
   // Active flow map - use custom if available and selected, otherwise default
   // Apply variable substitutions so step questions match what the assistant actually says
   const activeFlowMap = useMemo(() => {
@@ -73,26 +70,18 @@ function App() {
       ? customFlowMap 
       : defaultFlowMap;
     
-    // Substitute placeholders in the flow map for accurate step inference and matching
-    const nameToUse = patientName?.trim() || '';
     const variableValues = scriptSettings.variableValues || {};
     
     const substituteText = (text: string): string => {
       let result = text;
-      // Replace [patient_name]
-      if (nameToUse) {
-        result = result.replace(/\[patient_name\]/gi, nameToUse);
-      } else {
-        result = result.replace(/\[patient_name\]\s*/gi, '');
-      }
-      // Replace other variables
+      // Replace all variables from variableValues (patient_name, street_address, etc.)
       for (const [varName, value] of Object.entries(variableValues)) {
         if (value) {
           result = result.replace(new RegExp(`\\[${varName}\\]`, 'gi'), value);
         }
       }
-      // Remove any remaining placeholders
-      result = result.replace(/\[[a-z_]+\]/gi, '');
+      // Remove any remaining unfilled placeholders
+      result = result.replace(/\[[a-z0-9_]+\]/gi, '');
       return result;
     };
 
@@ -104,7 +93,7 @@ function App() {
         info: substituteText(step.info || ''),
       })),
     };
-  }, [scriptSettings.scriptChoice, customFlowMap, patientName, scriptSettings.variableValues]);
+  }, [scriptSettings.scriptChoice, customFlowMap, scriptSettings.variableValues]);
 
   // LLM-based answer matching (same as voice5.py match_answer_with_llm)
   const matchAnswerWithLLM = useCallback(async (
@@ -369,84 +358,58 @@ function App() {
     }
   }, []);
 
+  // Unified variable substitution — replaces all [placeholders] with values from variableValues
+  const substituteVariables = useCallback((text: string): string => {
+    let result = text;
+    const variableValues = scriptSettings.variableValues || {};
+    for (const [varName, value] of Object.entries(variableValues)) {
+      if (value) {
+        result = result.replace(new RegExp(`\\[${varName}\\]`, 'gi'), value);
+      }
+    }
+    // Remove any remaining unfilled placeholders
+    result = result.replace(/\[[a-z0-9_]+\]/gi, '');
+    // Clean up artifacts from removed placeholders (double commas, extra spaces)
+    result = result.replace(/,\s*,/g, ',');
+    result = result.replace(/\s{2,}/g, ' ').trim();
+    return result;
+  }, [scriptSettings.variableValues]);
+
   // Get the system prompt to use for the call
   const getCallSystemPrompt = useCallback((): string => {
+    const variableValues = scriptSettings.variableValues || {};
+
     // If custom script with generated content, combine with base template
     if (scriptSettings.scriptChoice === 'custom' && scriptSettings.generatedScriptContent) {
-      // Get the greeting and replace patient name placeholder
-      let greeting = scriptSettings.generatedGreeting || 'Hello, this is Penn Medicine calling.';
-      const nameToUse = patientName?.trim() || '';
-      
-      // Replace [patient_name] placeholder
-      if (nameToUse) {
-        greeting = greeting.replace(/\[patient_name\]/gi, nameToUse);
-      } else {
-        // No name - remove just the placeholder, keep "Hi" or "Hello"
-        // Pattern 1: "Hi [patient_name], " → "Hi, " or "Hello [patient_name], " → "Hello, "
-        greeting = greeting.replace(/\[patient_name\]\s*/gi, '');
-        // Clean up double spaces and commas
-        greeting = greeting.replace(/,\s*,/g, ',');
-        greeting = greeting.replace(/\s{2,}/g, ' ').trim();
-      }
-      
-      // Get the script content and replace patient name there too
-      let scriptContent = scriptSettings.generatedScriptContent;
-      if (nameToUse) {
-        scriptContent = scriptContent.replace(/\[patient_name\]/gi, nameToUse);
-      } else {
-        scriptContent = scriptContent.replace(/\[patient_name\]/gi, '');
-      }
-      
-      // Replace other variable placeholders
-      const variableValues = scriptSettings.variableValues || {};
-      for (const [varName, value] of Object.entries(variableValues)) {
-        if (value) {
-          const regex = new RegExp(`\\[${varName}\\]`, 'gi');
-          greeting = greeting.replace(regex, value);
-          scriptContent = scriptContent.replace(regex, value);
-        }
-      }
+      let greeting = substituteVariables(
+        scriptSettings.generatedGreeting || 'Hello, this is Penn Medicine calling.'
+      );
+      let scriptContent = substituteVariables(scriptSettings.generatedScriptContent);
       
       // Debug: verify substitutions worked
-      console.log(`[getCallSystemPrompt] nameToUse="${nameToUse}", greeting still has [patient_name]:`, greeting.includes('[patient_name]'));
-      console.log(`[getCallSystemPrompt] scriptContent still has [patient_name]:`, scriptContent.includes('[patient_name]'));
-      console.log(`[getCallSystemPrompt] greeting first 100 chars:`, greeting.substring(0, 100));
+      console.log(`[getCallSystemPrompt] variableValues:`, JSON.stringify(variableValues));
+      console.log(`[getCallSystemPrompt] ORIGINAL greeting:`, JSON.stringify(scriptSettings.generatedGreeting?.substring(0, 150)));
+      console.log(`[getCallSystemPrompt] AFTER sub greeting:`, JSON.stringify(greeting.substring(0, 150)));
       
-      // Build the full system prompt by combining base template + greeting + script + flow map
       // Substitute variables in the flow map too so branching rules match the actual script
       let substitutedFlowMap = customFlowMap;
       if (customFlowMap) {
-        const substituteAll = (text: string): string => {
-          let result = text;
-          if (nameToUse) {
-            result = result.replace(/\[patient_name\]/gi, nameToUse);
-          } else {
-            result = result.replace(/\[patient_name\]/gi, '');
-          }
-          for (const [vn, vv] of Object.entries(variableValues)) {
-            if (vv) {
-              result = result.replace(new RegExp(`\\[${vn}\\]`, 'gi'), vv);
-            }
-          }
-          // Strip any remaining unfilled placeholders
-          result = result.replace(/\[[a-z_]+\]/gi, '');
-          return result;
-        };
         substitutedFlowMap = {
           ...customFlowMap,
           steps: customFlowMap.steps.map(step => ({
             ...step,
-            question: substituteAll(step.question),
-            info: substituteAll(step.info || ''),
+            question: substituteVariables(step.question),
+            info: substituteVariables(step.info || ''),
           })),
         };
       }
       return buildFullSystemPrompt(scriptContent, greeting, substitutedFlowMap || undefined);
     }
 
-    // Use built-in scripts
-    return getSystemPrompt(scriptSettings.scriptChoice, scriptSettings.mode, patientName || undefined);
-  }, [scriptSettings, patientName, customFlowMap]);
+    // Use built-in scripts — apply variable substitution the same way
+    const rawPrompt = getSystemPrompt(scriptSettings.scriptChoice, scriptSettings.mode);
+    return substituteVariables(rawPrompt);
+  }, [scriptSettings, customFlowMap, substituteVariables]);
 
   // Start a new call
   const handleStartCall = useCallback(() => {
@@ -469,30 +432,21 @@ function App() {
 
     const systemPrompt = getCallSystemPrompt();
     
-    // Debug: log the full system prompt so we can verify substitutions and flow
-    console.log('[debug] ===== SYSTEM PROMPT SENT TO CALL =====');
-    console.log('[debug] Patient name from state:', JSON.stringify(patientName));
-    console.log('[debug] Patient name trimmed:', JSON.stringify(patientName?.trim()));
+    // Debug: log key info to verify substitutions
+    console.log('[debug] ===== STARTING CALL =====');
     console.log('[debug] Variable values:', JSON.stringify(scriptSettings.variableValues));
-    console.log('[debug] Generated greeting:', JSON.stringify(scriptSettings.generatedGreeting));
     console.log('[debug] Prompt length:', systemPrompt.length);
-    console.log('[debug] Contains [patient_name]:', systemPrompt.includes('[patient_name]'));
-    console.log('[debug] Contains [street_address]:', systemPrompt.includes('[street_address]'));
-    // Find and log the GREETING line
+    console.log('[debug] Any remaining [placeholders]:', systemPrompt.match(/\[[a-z0-9_]+\]/gi) || 'none');
     const greetingLineMatch = systemPrompt.match(/GREETING.*?\n.*?\n/s);
-    console.log('[debug] Greeting in prompt:', greetingLineMatch?.[0] || '(not found)');
-    console.log('[debug] ===== FULL SYSTEM PROMPT =====');
-    console.log(systemPrompt);
-    console.log('[debug] ===== END SYSTEM PROMPT =====');
+    console.log('[debug] Greeting in prompt:', greetingLineMatch?.[0]?.trim() || '(not found)');
     
     startCall(
-      patientName || undefined, 
       systemPrompt, 
       scriptSettings.voice, 
       scriptSettings.mode,
       scriptSettings.variableValues || {}
     );
-  }, [patientName, scriptSettings, getCallSystemPrompt, startCall]);
+  }, [scriptSettings, getCallSystemPrompt, startCall]);
 
   // End current call
   const handleEndCall = useCallback(() => {

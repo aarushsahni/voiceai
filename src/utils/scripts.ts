@@ -1,22 +1,14 @@
 import { FlowMap } from '../types';
 
-// System prompt for ED follow-up
+// System prompt for ED follow-up — uses [patient_name] placeholder like all other variables
 export function getSystemPrompt(
   scriptId: string, 
   mode: 'deterministic',
-  patientName?: string
 ): string {
-  const name = patientName || '[patient_name]';
-  return getStandardScriptPrompt(name);
-}
-
-function getStandardScriptPrompt(patientName: string): string {
-  const greeting = `Hi ${patientName}, this is Penn Medicine Lancaster General Health calling about your recent emergency room visit.`;
-  
   return `
 Penn Medicine LGH ED follow-up call. Read scripts VERBATIM. Be warm and conversational.
 
-START: "${greeting} To continue in English, please say 'English'. Para continuar en español, por favor diga 'Español'."
+START: "Hi [patient_name], this is Penn Medicine Lancaster General Health calling about your recent emergency room visit. To continue in English, please say 'English'. Para continuar en español, por favor diga 'Español'."
 
 ENGLISH FLOW:
 1. User says English → "Thank you. We care about your recovery and want to check in with you. I'll ask you a few short questions about how you're doing. Our records show you recently left the emergency department before your visit was complete. Is that correct? Please say 'Yes' or 'No'."

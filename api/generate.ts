@@ -480,22 +480,6 @@ function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elem
     };
   });
 
-  // Extract variables from all adapted texts + step questions
-  const variables = new Set<string>();
-  const allTexts = [...Object.values(adaptedTexts), ...updatedSteps.map((s: any) => s.question)];
-  allTexts.forEach(text => {
-    if (typeof text !== 'string') return;
-    const matches = text.match(/\[([a-z_]+)\]/g);
-    if (matches) {
-      matches.forEach(match => {
-        const varName = match.slice(1, -1);
-        if (varName !== 'patient_name') {
-          variables.add(varName);
-        }
-      });
-    }
-  });
-
   // Detect greeting (first element's adapted text if it's an entry point)
   const firstElement = elements.find(el => !el.visibleIf);
   let greeting = firstElement 
@@ -507,6 +491,21 @@ function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elem
     greeting = `Hello [patient_name], ` + greeting.charAt(0).toLowerCase() + greeting.slice(1);
     console.log('[multi-step] Greeting was missing [patient_name], prepended it');
   }
+
+  // Extract variables from all adapted texts + step questions + greeting
+  // Regex includes digits to catch names like [street_address_2]
+  const variables = new Set<string>();
+  const allTexts = [...Object.values(adaptedTexts), ...updatedSteps.map((s: any) => s.question), greeting];
+  allTexts.forEach(text => {
+    if (typeof text !== 'string') return;
+    const matches = text.match(/\[([a-z0-9_]+)\]/g);
+    if (matches) {
+      matches.forEach(match => {
+        const varName = match.slice(1, -1);
+        variables.add(varName);
+      });
+    }
+  });
 
   // Clean up closing step - remove SMS-specific phrases
   for (const step of updatedSteps) {
@@ -591,8 +590,8 @@ STEP TYPES:
 
 VARIABLE PLACEHOLDERS:
 - Use [variable_name] format for all dynamic values
-- Include ALL variables used in the "variables" array (excluding patient_name which is always included)
-- Common variables: [practice_number], [street_address], [city], [state], [postal_code], [appointment_date], etc.
+- Include ALL variables used in the "variables" array (including [patient_name])
+- Common variables: [patient_name], [practice_number], [street_address], [city], [state], [postal_code], [appointment_date], etc.
 
 === SMS SURVEY JSON FORMAT ===
 If input is JSON with "pages" and "elements", parse it as an SMS survey:

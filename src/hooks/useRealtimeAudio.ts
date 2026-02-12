@@ -12,7 +12,6 @@ interface UseRealtimeAudioReturn {
   status: CallStatus;
   latency: LatencyInfo;
   startCall: (
-    patientName?: string, 
     systemPrompt?: string, 
     voice?: string, 
     mode?: string,
@@ -232,14 +231,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   }, [updateStatus, addTranscript]);
 
   const startCall = useCallback(async (
-    patientName?: string,
     systemPrompt?: string,
     voice: string = 'cedar',
     mode: string = 'deterministic',
     variableValues: Record<string, string> = {}
   ) => {
     if (!isSupported) {
-      onError?.('Browser does not support audio recording');
+      onErrorRef.current?.('Browser does not support audio recording');
       return;
     }
 
@@ -262,11 +260,10 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          patientName, 
           systemPrompt: systemPrompt || '', 
           voice,
           mode,
-          variableValues,  // Pass variable values for substitution
+          variableValues,  // All variables including patient_name
         }),
       });
 
@@ -374,7 +371,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       dc.onerror = (error) => {
         console.error('Data channel error:', error);
-        onError?.('Connection error');
+        onErrorRef.current?.('Connection error');
       };
 
       dc.onclose = () => {
@@ -430,8 +427,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       updateStatus('error');
       addTranscript('system', `Error: ${message}`);
     }
+  // All deps are stable (use refs internally) so this callback is created once
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSupported, updateStatus, addTranscript, endCall, status]);
+  }, [isSupported, updateStatus, addTranscript, endCall]);
 
   // Handle server events from data channel
   const handleServerEvent = useCallback((
@@ -589,8 +587,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         // Ignore other events
         break;
     }
+  // All deps are stable (use refs internally) so this callback is created once
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, updateStatus, addTranscript, endCall, waitForAudioSilence]);
+  }, [updateStatus, addTranscript, endCall, waitForAudioSilence]);
 
   // Cleanup on unmount
   useEffect(() => {
