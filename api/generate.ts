@@ -148,6 +148,10 @@ REVIEW RULES:
 6. Ensure every option.next points to an existing step id or "end_call".
 7. Ensure a closing path exists and ends with goodbye.
 8. Preserve placeholders/variables and keep the "variables" array aligned.
+9. Combine related adjacent questions when reasonable:
+   - If two consecutive questions are tightly related and can be asked naturally together, combine them into one clearer question.
+   - Do NOT combine if it would make the question too long/confusing or if branching outcomes differ.
+   - Keep patient experience concise and conversational.
 
 Return ONLY valid JSON in the same schema as input:
 {
@@ -900,6 +904,10 @@ Include these in the script instructions so the agent says them naturally.
 9. final_phrases: ["goodbye", "take care", "bye"]
 10. Include "keywords" array for each option with speech variations
 11. CALLBACK ROUTING: If an option means the team will call the patient, route to an explicit callback confirmation step first (statement), then continue to the normal next step. Do NOT route callback-intent options directly to closing.
+12. COMBINE RELATED QUESTIONS WHEN REASONABLE:
+    - If adjacent questions are clearly related and can be asked naturally together, combine them into one concise question.
+    - Do NOT combine unrelated topics or steps with different branching outcomes.
+    - Prefer fewer, clearer questions when it improves flow.
 
 === EXAMPLE: SMS → IVR ===
 SMS input:

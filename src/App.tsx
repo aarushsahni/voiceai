@@ -48,6 +48,8 @@ function App() {
   // Reminder tracking - flags when a reminder/follow-up was promised
   const [needsReminder, setNeedsReminder] = useState(false);
   const [reminderReasons, setReminderReasons] = useState<string[]>([]);
+  // Monotonic call run id to prevent stale async updates between calls
+  const callRunIdRef = useRef(0);
 
   // Script configuration state
   const [scriptSettings, setScriptSettings] = useState<ScriptSettings>({
@@ -168,9 +170,11 @@ function App() {
   const generateCallSummary = useCallback(async (
     timeline: TranscriptEntry[],
     callbackNeeded: boolean,
-    reasons: string[]
+    reasons: string[],
+    callRunId: number
   ) => {
     if (timeline.length === 0) {
+      if (callRunId !== callRunIdRef.current) return;
       setCallSummary({
         outcome: 'incomplete',
         callbackNeeded: false,
@@ -195,6 +199,10 @@ function App() {
 
       if (response.ok) {
         const data = await response.json();
+        if (callRunId !== callRunIdRef.current) {
+          console.log('[summary] Ignoring stale summary result from previous call');
+          return;
+        }
         setCallSummary(data.summary);
         
         // Set reminder alerts from LLM analysis of full transcript
@@ -205,6 +213,7 @@ function App() {
           setReminderReasons(followUpActions);
         }
       } else {
+        if (callRunId !== callRunIdRef.current) return;
         setCallSummary({
           outcome: 'completed',
           callbackNeeded: callbackNeeded,
@@ -215,6 +224,7 @@ function App() {
       }
     } catch (err) {
       console.error('Summary generation error:', err);
+      if (callRunId !== callRunIdRef.current) return;
       setCallSummary({
         outcome: 'completed',
         callbackNeeded: callbackNeeded,
@@ -223,6 +233,7 @@ function App() {
         language: 'Unknown'
       });
     } finally {
+      if (callRunId !== callRunIdRef.current) return;
       setIsSummaryLoading(false);
     }
   }, []);
@@ -287,6 +298,7 @@ function App() {
   // Handle status changes
   const handleStatusChange = useCallback((newStatus: CallStatus) => {
     if (newStatus === 'ended') {
+      const callRunId = callRunIdRef.current;
       // Mark current step as completed when call ends
       const finalStepId = currentStepIdRef.current;
       if (finalStepId) {
@@ -298,7 +310,7 @@ function App() {
         // Access current callback state
         setNeedsCallback(currentNeedsCallback => {
           setCallbackReasons(currentReasons => {
-            generateCallSummary(current, currentNeedsCallback, currentReasons);
+            generateCallSummary(current, currentNeedsCallback, currentReasons, callRunId);
             return currentReasons;
           });
           return currentNeedsCallback;
@@ -432,6 +444,8 @@ function App() {
       return;
     }
 
+    // Start a new call run (invalidates stale async updates from prior calls)
+    callRunIdRef.current += 1;
     setError(null);
     setTranscripts([]);
     setCurrentStepId(null);
@@ -442,6 +456,7 @@ function App() {
     setCallbackReasons([]);
     setNeedsReminder(false);
     setReminderReasons([]);
+    setIsSummaryLoading(false);
 
     const systemPrompt = getCallSystemPrompt();
     
