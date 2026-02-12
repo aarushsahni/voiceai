@@ -59,7 +59,6 @@ function App() {
     voice: 'cedar', // Default voice from voice5.py
     variables: [],           // Variable placeholders from generated script
     variableValues: {},      // User-filled values for variables
-    conversionMode: 'multi-step',  // Default to multi-step (more reliable)
   });
 
   // Substitute placeholders for UI display in flow map cards.
@@ -323,8 +322,7 @@ function App() {
   // Generate/convert custom script - returns script content, greeting, and variables
   const handleGenerateScript = useCallback(async (
     script: string,
-    inputType: InputType,
-    conversionMode?: 'single' | 'multi-step'
+    inputType: InputType
   ): Promise<{ scriptContent: string; greeting: string; variables?: string[] } | null> => {
     setIsGenerating(true);
     setError(null);
@@ -333,7 +331,7 @@ function App() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ script, inputType, conversionMode: conversionMode || 'single' }),
+        body: JSON.stringify({ script, inputType }),
       });
 
       if (!response.ok) {

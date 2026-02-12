@@ -16,18 +16,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { script, inputType, conversionMode = 'single' } = req.body || {};
+    const { script, inputType } = req.body || {};
 
     if (!script || typeof script !== 'string') {
       return res.status(400).json({ error: 'Script text is required' });
     }
 
-    // Route to appropriate conversion method
-    if (conversionMode === 'multi-step' && inputType === 'script') {
+    // For SMS/script input, always use multi-step conversion.
+    if (inputType === 'script') {
       return await handleMultiStepConversion(req, res, apiKey);
     }
 
-    // Single-prompt conversion (existing method)
+    // Open-ended prompt generation: pass 1 (existing generation call)
     const systemInstructions = buildConversionInstructions();
     const userMessage = buildUserMessage(script, inputType);
 
@@ -100,6 +100,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // Open-ended prompt generation: pass 2 (flow review/fix pass)
+    parsed = await reviewOpenPromptFlowWithLLM(parsed, script, apiKey);
+
     if (parsed.flow?.steps && Array.isArray(parsed.flow.steps)) {
       const callbackNormalized = ensureCallbackRouting(parsed.flow);
       parsed.flow = callbackNormalized.flowMap;
@@ -122,6 +125,76 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({
       error: error instanceof Error ? error.message : 'Failed to generate script',
     });
+  }
+}
+
+async function reviewOpenPromptFlowWithLLM(parsed: any, originalPrompt: string, apiKey: string): Promise<any> {
+  try {
+    const reviewInput = `You are a second-pass IVR flow reviewer.
+Review and improve the generated IVR JSON for LOGICAL CONSISTENCY and NON-REDUNDANCY.
+
+INPUT JSON:
+${JSON.stringify(parsed, null, 2)}
+
+ORIGINAL USER PROMPT (for intent context):
+${originalPrompt}
+
+REVIEW RULES:
+1. Keep original clinical intent and tone; make minimal structural fixes only.
+2. Fix logical issues: contradictory branches, dead ends, unreachable steps, loops, invalid next references.
+3. Reduce redundancy: merge duplicate options/steps if they mean the same thing.
+4. Keep one-step-at-a-time flow (no overstepping).
+5. If an option means team should call patient back, route through a callback confirmation step before normal continuation.
+6. Ensure every option.next points to an existing step id or "end_call".
+7. Ensure a closing path exists and ends with goodbye.
+8. Preserve placeholders/variables and keep the "variables" array aligned.
+
+Return ONLY valid JSON in the same schema as input:
+{
+  "greeting": string,
+  "script": string,
+  "final_phrases": [string],
+  "variables": [string],
+  "flow": { "title": string, "steps": [...] }
+}`;
+
+    const reviewResponse = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-5.2',
+        input: reviewInput,
+        reasoning: { effort: 'medium' },
+      }),
+    });
+
+    if (!reviewResponse.ok) {
+      console.error('[open-prompt review] reviewer call failed:', await reviewResponse.text());
+      return parsed;
+    }
+
+    const reviewData = await reviewResponse.json();
+    const messageBlock = reviewData.output?.find((item: any) => item.type === 'message');
+    const reviewContent = messageBlock?.content?.[0]?.text;
+    if (!reviewContent) return parsed;
+
+    let reviewed;
+    try {
+      reviewed = JSON.parse(reviewContent);
+    } catch {
+      const jsonMatch = reviewContent.match(/```(?:json)?\s*([\s\S]*?)```/) || reviewContent.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return parsed;
+      reviewed = JSON.parse((jsonMatch[1] || jsonMatch[0]).trim());
+    }
+
+    if (!reviewed || typeof reviewed !== 'object') return parsed;
+    return reviewed;
+  } catch (error) {
+    console.error('[open-prompt review] failed, using pass-1 result:', error);
+    return parsed;
   }
 }
 
