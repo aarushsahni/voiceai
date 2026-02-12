@@ -62,37 +62,42 @@ function App() {
     conversionMode: 'multi-step',  // Default to multi-step (more reliable)
   });
 
+  // Substitute placeholders for UI display in flow map cards.
+  // Uses the same variable source for ALL variables (patient_name, address fields, etc).
+  const substituteForDisplay = useCallback((text: string): string => {
+    let result = text;
+    const variableValues = scriptSettings.variableValues || {};
+    for (const [varName, value] of Object.entries(variableValues)) {
+      if (!value) continue;
+      const safeVarName = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      result = result.replace(new RegExp(`\\[${safeVarName}\\]`, 'gi'), value);
+    }
+    result = result.replace(/\[[a-z0-9_]+\]/gi, '');
+    result = result.replace(/,\s*,/g, ',');
+    result = result.replace(/\s{2,}/g, ' ').trim();
+    return result;
+  }, [scriptSettings.variableValues]);
+
   // Active flow map - use custom if available and selected, otherwise default
-  // Apply variable substitutions so step questions match what the assistant actually says
+  // Apply variable substitutions so flow builder reflects entered values
   const activeFlowMap = useMemo(() => {
     const baseMap = (scriptSettings.scriptChoice === 'custom' && customFlowMap) 
       ? customFlowMap 
       : defaultFlowMap;
-    
-    const variableValues = scriptSettings.variableValues || {};
-    
-    const substituteText = (text: string): string => {
-      let result = text;
-      // Replace all variables from variableValues (patient_name, street_address, etc.)
-      for (const [varName, value] of Object.entries(variableValues)) {
-        if (value) {
-          result = result.replace(new RegExp(`\\[${varName}\\]`, 'gi'), value);
-        }
-      }
-      // Remove any remaining unfilled placeholders
-      result = result.replace(/\[[a-z0-9_]+\]/gi, '');
-      return result;
-    };
 
     return {
       ...baseMap,
       steps: baseMap.steps.map(step => ({
         ...step,
-        question: substituteText(step.question),
-        info: substituteText(step.info || ''),
+        question: substituteForDisplay(step.question),
+        info: substituteForDisplay(step.info || ''),
+        options: step.options.map(opt => ({
+          ...opt,
+          label: substituteForDisplay(opt.label),
+        })),
       })),
     };
-  }, [scriptSettings.scriptChoice, customFlowMap, scriptSettings.variableValues]);
+  }, [scriptSettings.scriptChoice, customFlowMap, substituteForDisplay]);
 
   // LLM-based answer matching (same as voice5.py match_answer_with_llm)
   const matchAnswerWithLLM = useCallback(async (
