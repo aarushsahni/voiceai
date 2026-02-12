@@ -100,6 +100,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    if (parsed.flow?.steps && Array.isArray(parsed.flow.steps)) {
+      const callbackNormalized = ensureCallbackRouting(parsed.flow);
+      parsed.flow = callbackNormalized.flowMap;
+      if (callbackNormalized.changed) {
+        // Keep script text aligned with routing safeguards so prompt and flow map agree.
+        parsed.script = buildScriptContentFromFlow(parsed.flow.steps);
+        console.log(`[single] Added callback routing safeguards (${callbackNormalized.addedStepIds.length} callback step(s))`);
+      }
+    }
+
     return res.status(200).json({
       greeting: parsed.greeting || 'Hello, this is Penn Medicine calling about your recent visit.',
       scriptContent: parsed.script || '',  // Just the script steps, not full system prompt
@@ -127,8 +137,13 @@ async function handleMultiStepConversion(req: VercelRequest, res: VercelResponse
     console.log(`[multi-step] Step 1: Parsed ${parsedElements.length} elements from input${context ? ' (with context)' : ''}`);
     
     // Step 2: Build flow map using LLM (understands complex visibleIf logic + context)
-    const flowMap = await buildFlowWithLLM(parsedElements, apiKey, context);
+    const llmFlowMap = await buildFlowWithLLM(parsedElements, apiKey, context);
+    const callbackNormalized = ensureCallbackRouting(llmFlowMap);
+    const flowMap = callbackNormalized.flowMap;
     console.log(`[multi-step] Step 2: Built flow with ${flowMap.steps.length} steps`);
+    if (callbackNormalized.changed) {
+      console.log(`[multi-step] Step 2b: Added callback routing safeguards (${callbackNormalized.addedStepIds.length} callback step(s))`);
+    }
     // Debug: log each step's connections
     for (const step of flowMap.steps) {
       const optionsSummary = step.options?.map((o: any) => `"${o.label}" → ${o.next}`).join(', ') || 'none';
@@ -314,6 +329,7 @@ TASK: Create a flow map JSON showing:
 6. For "text" type elements (free-text input), make them type "question" - the patient will answer freely
 7. ALWAYS include a "closing" step at the end with type "statement", question: "Thank you for your time. Take care, goodbye!" and options: [{"label": "end", "next": "end_call"}]
 8. The closing step must NOT contain any SMS-specific text like "Reply STOP to opt out" - this is a voice call, not SMS
+9. CALLBACK ROUTING RULE: if any option means the team will call the patient (callback intent), do NOT route directly to closing. Route to an explicit callback confirmation statement first (e.g., "I'll make sure someone from our team calls you back"), then continue to the normal next step.
 
 Return ONLY valid JSON:
 {
@@ -371,6 +387,157 @@ CRITICAL:
   }
 
   return JSON.parse(jsonMatch[0]);
+}
+
+function hasCallbackIntent(text: string): boolean {
+  const lower = (text || '').toLowerCase();
+  if (!lower) return false;
+
+  // Positive signals that the patient is asking to be called by the care team.
+  const callbackSignals = [
+    /\bcall me\b/,
+    /\bcall(?:\s+us)? back\b/,
+    /\bcallback\b/,
+    /\breturn(?:\s+a)? call\b/,
+    /\bsomeone(?:\s+from(?:\s+the)?\s+team)?\s+call\b/,
+    /\bteam\s+call\b/,
+    /\bhave someone call\b/,
+  ];
+
+  // Exclude intents where the patient says THEY will place the call.
+  const selfCallSignals = [
+    /\bi\s+will\s+call\b/,
+    /\bi'll\s+call\b/,
+    /\bcall\s+the\s+lab\b/,
+    /\bcall\s+penn\b/,
+    /\bcall\s+your\s+doctor\b/,
+  ];
+
+  const isCallback = callbackSignals.some((re) => re.test(lower));
+  if (!isCallback) return false;
+  if (selfCallSignals.some((re) => re.test(lower))) return false;
+  return true;
+}
+
+function isCallbackStep(step: any): boolean {
+  const combined = `${step?.label || ''} ${step?.info || ''} ${step?.question || ''}`.toLowerCase();
+  return (
+    combined.includes('call you back') ||
+    combined.includes('callback') ||
+    combined.includes('someone from our team calls you') ||
+    combined.includes('someone will call you')
+  );
+}
+
+function buildScriptContentFromFlow(steps: any[]): string {
+  return steps.map((step: any) => {
+    const isStatement = step.type === 'statement';
+    const typeTag = isStatement
+      ? ' [STATEMENT - auto-continue, do NOT wait for response]'
+      : ' [QUESTION - wait for patient response]';
+
+    let optionsText: string;
+    if (isStatement) {
+      const nextStep = step.options?.[0]?.next || 'end_call';
+      optionsText = `→ Then IMMEDIATELY continue to: ${nextStep}`;
+    } else {
+      optionsText = step.options?.map((opt: any) =>
+        `- If patient says "${opt.label}": go to ${opt.next}${opt.triggers_callback ? ' (callback)' : ''}`
+      ).join('\n') || '';
+    }
+
+    return `STEP ${step.id} - ${step.label}${typeTag}:\n"${step.question}"\n${optionsText}\n`;
+  }).join('\n');
+}
+
+function ensureCallbackRouting(flowMap: any): { flowMap: any; changed: boolean; addedStepIds: string[] } {
+  if (!flowMap?.steps || !Array.isArray(flowMap.steps)) {
+    return { flowMap, changed: false, addedStepIds: [] };
+  }
+
+  const steps = flowMap.steps.map((step: any) => ({
+    ...step,
+    options: Array.isArray(step.options) ? step.options.map((o: any) => ({ ...o })) : [],
+  }));
+
+  const stepById = new Map<string, any>(steps.map((s: any) => [s.id, s]));
+  const existingIds = new Set<string>(steps.map((s: any) => s.id));
+  const addedSteps: any[] = [];
+  const addedStepIds: string[] = [];
+  let changed = false;
+
+  const makeUniqueId = (base: string): string => {
+    let id = base;
+    let i = 2;
+    while (existingIds.has(id)) {
+      id = `${base}_${i}`;
+      i++;
+    }
+    existingIds.add(id);
+    return id;
+  };
+
+  for (const step of steps) {
+    if (!Array.isArray(step.options) || step.options.length === 0) continue;
+
+    step.options = step.options.map((opt: any, idx: number) => {
+      const label = String(opt?.label || '');
+      const needsCallback = opt?.triggers_callback === true || hasCallbackIntent(label);
+      if (!needsCallback) return opt;
+
+      const nextStepId = String(opt?.next || '').trim();
+      const nextStep = nextStepId ? stepById.get(nextStepId) : null;
+
+      // Already routed via callback confirmation step.
+      if (nextStep && isCallbackStep(nextStep)) {
+        if (!opt.triggers_callback) changed = true;
+        return { ...opt, triggers_callback: true };
+      }
+
+      const callbackStepId = makeUniqueId(`callback_${step.id}_${idx + 1}`);
+      const continueTo = nextStepId || 'end_call';
+
+      addedSteps.push({
+        id: callbackStepId,
+        label: 'Callback confirmation',
+        type: 'statement',
+        info: 'Confirms team will call patient back',
+        question: "I understand. We'll have someone from our care team call you back.",
+        options: [{ label: 'continue', next: continueTo }],
+      });
+      addedStepIds.push(callbackStepId);
+      changed = true;
+
+      return {
+        ...opt,
+        triggers_callback: true,
+        next: callbackStepId,
+      };
+    });
+  }
+
+  if (addedSteps.length === 0) {
+    return { flowMap: { ...flowMap, steps }, changed: false, addedStepIds: [] };
+  }
+
+  const closingIdx = steps.findIndex((s: any) =>
+    s.id === 'closing' ||
+    String(s.label || '').toLowerCase().includes('closing') ||
+    String(s.label || '').toLowerCase().includes('goodbye')
+  );
+
+  const mergedSteps = [...steps];
+  if (closingIdx >= 0) {
+    mergedSteps.splice(closingIdx, 0, ...addedSteps);
+  } else {
+    mergedSteps.push(...addedSteps);
+  }
+
+  return {
+    flowMap: { ...flowMap, steps: mergedSteps },
+    changed,
+    addedStepIds,
+  };
 }
 
 // Step 3: Adapt text for voice using LLM
@@ -530,24 +697,7 @@ function assembleResult(flowMap: any, adaptedTexts: Record<string, string>, elem
   }
 
   // Build script content - clearly mark statement vs question steps
-  const scriptContent = updatedSteps.map((step: any) => {
-    const isStatement = step.type === 'statement';
-    const typeTag = isStatement ? ' [STATEMENT - auto-continue, do NOT wait for response]' : ' [QUESTION - wait for patient response]';
-    
-    let optionsText: string;
-    if (isStatement) {
-      // Statement steps: show auto-continue direction clearly
-      const nextStep = step.options?.[0]?.next || 'end_call';
-      optionsText = `→ Then IMMEDIATELY continue to: ${nextStep}`;
-    } else {
-      // Question steps: show response options
-      optionsText = step.options?.map((opt: any) => 
-        `- If patient says "${opt.label}": go to ${opt.next}${opt.triggers_callback ? ' (callback)' : ''}`
-      ).join('\n') || '';
-    }
-    
-    return `STEP ${step.id} - ${step.label}${typeTag}:\n"${step.question}"\n${optionsText}\n`;
-  }).join('\n');
+  const scriptContent = buildScriptContentFromFlow(updatedSteps);
 
   return {
     greeting,
@@ -676,6 +826,7 @@ Include these in the script instructions so the agent says them naturally.
 8. Last spoken text must contain "goodbye"
 9. final_phrases: ["goodbye", "take care", "bye"]
 10. Include "keywords" array for each option with speech variations
+11. CALLBACK ROUTING: If an option means the team will call the patient, route to an explicit callback confirmation step first (statement), then continue to the normal next step. Do NOT route callback-intent options directly to closing.
 
 === EXAMPLE: SMS → IVR ===
 SMS input:
@@ -742,6 +893,9 @@ CRITICAL RULES:
    - If SMS has greeting: integrate naturally (e.g., "Hello [patient_name], this is Penn Medicine...")
    - If SMS has no greeting: start with "Hi [patient_name], this is Penn Medicine calling..."
    - NEVER duplicate greetings
+6. CALLBACK ROUTING:
+   - If an option means the team should call the patient, route to an explicit callback confirmation step first
+   - Do NOT route callback-intent options straight to closing
 
 The questions and statements should sound almost identical to the SMS, just spoken naturally.
 
