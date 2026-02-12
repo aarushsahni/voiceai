@@ -235,9 +235,11 @@ export function inferFlowStep(
   }
 
   if (bestMatch) {
-    console.log(`[inferFlowStep] Best match: "${bestMatch.id}" (score: ${(bestMatch.score * 100).toFixed(0)}%)`);
+    console.log(`[inferFlowStep] Best match: "${bestMatch.id}" (score: ${(bestMatch.score * 100).toFixed(0)}%) from text: "${text.substring(0, 80)}..."`);
     return bestMatch.id;
   }
+  
+  console.log(`[inferFlowStep] No match found for assistant text: "${text.substring(0, 80)}..."`);
 
   // Fallback: check for generic keywords
   if (text.includes('english') || text.includes('español')) return 'language';

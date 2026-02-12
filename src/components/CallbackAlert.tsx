@@ -142,44 +142,6 @@ export function checkAssistantForCallback(assistantText: string): { needed: bool
   return { needed: false, reason: null };
 }
 
-// Phrases the ASSISTANT says that indicate a reminder will be sent
-export const ASSISTANT_REMINDER_PHRASES = [
-  "reminder message",
-  "reminder from us",
-  "look out for a reminder",
-  "send you a reminder",
-  "reminder next month",
-  "we'll follow up",
-  "follow-up message",
-  "we'll check back",
-  "check in with you again",
-  "reach out again",
-  "send you lab slips",
-  "mail you lab slips",
-  "we'll send you",
-  "we'll mail you",
-  "update our records and send",
-];
-
-// Check if ASSISTANT text indicates a reminder/follow-up will be sent
-export function checkAssistantForReminder(assistantText: string): { needed: boolean; reason: string | null } {
-  const lower = assistantText.toLowerCase();
-  
-  for (const phrase of ASSISTANT_REMINDER_PHRASES) {
-    if (lower.includes(phrase)) {
-      // Determine the specific type of reminder
-      if (lower.includes('lab slips') || lower.includes('mail you')) {
-        return { needed: true, reason: 'Lab slips will be mailed to patient' };
-      }
-      if (lower.includes('reminder') || lower.includes('next month')) {
-        return { needed: true, reason: 'Reminder message scheduled for next month' };
-      }
-      if (lower.includes('update our records')) {
-        return { needed: true, reason: 'Records will be updated and lab slips sent' };
-      }
-      return { needed: true, reason: 'Follow-up action promised to patient' };
-    }
-  }
-  
-  return { needed: false, reason: null };
-}
+// Reminder detection is now handled by the summary LLM which analyzes the full transcript
+// after the call ends. This provides full context and avoids false positives from
+// option descriptions vs. confirmed actions. See api/summary.ts for the implementation.

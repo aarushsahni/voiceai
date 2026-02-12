@@ -8,7 +8,7 @@ import { Transcript } from './components/Transcript';
 import { FlowMap } from './components/FlowMap';
 import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
-import { CallbackAlert, checkAssistantForCallback, checkAssistantForReminder } from './components/CallbackAlert';
+import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
@@ -24,7 +24,16 @@ function App() {
   // Keep ref in sync with state for use in callbacks
   useEffect(() => {
     currentStepIdRef.current = currentStepId;
+    console.log(`[flow] Current step changed to: "${currentStepId}"`);
   }, [currentStepId]);
+  
+  // Debug: log matched options changes
+  useEffect(() => {
+    if (matchedOptions.size > 0) {
+      const entries = Array.from(matchedOptions.entries());
+      console.log(`[flow] Matched options updated (${entries.length} matches):`, entries.map(([k, v]) => `${k} → "${v}"`).join(', '));
+    }
+  }, [matchedOptions]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [callSummary, setCallSummary] = useState<CallSummaryData | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
@@ -105,7 +114,16 @@ function App() {
     flowMap: FlowMapType
   ) => {
     const step = flowMap.steps.find(s => s.id === stepId);
-    if (!step || !step.options.length) return;
+    if (!step || !step.options.length) {
+      console.log(`[match] Skipping match: step "${stepId}" not found or has no options`);
+      return;
+    }
+    
+    // Skip matching for statement steps (only have "continue" option)
+    if (step.type === 'statement' || (step.options.length === 1 && step.options[0].label.toLowerCase() === 'continue')) {
+      console.log(`[match] Skipping statement step "${stepId}"`);
+      return;
+    }
 
     try {
       const response = await fetch('/api/match', {
@@ -128,14 +146,17 @@ function App() {
               console.log(`[match] Skipping overwrite for step ${stepId}, already matched as "${prev.get(stepId)}"`);
               return prev;
             }
-            console.log(`[match] Setting green highlight: step "${stepId}" → option "${data.match}"`);
+            console.log(`[match] ✅ Setting green highlight: step "${stepId}" → option "${data.match}"`);
             return new Map([...prev, [stepId, data.match]]);
           });
+        } else {
+          console.log(`[match] ❌ No match found for step "${stepId}", user said: "${userResponse}"`);
         }
+      } else {
+        console.log(`[match] ❌ Match API error: ${response.status} ${response.statusText}`);
       }
     } catch (err) {
-      // Fall back to local matching on error
-      console.error('LLM match error:', err);
+      console.error('[match] ❌ LLM match error:', err);
     }
   }, []);
 
@@ -171,6 +192,14 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setCallSummary(data.summary);
+        
+        // Set reminder alerts from LLM analysis of full transcript
+        const followUpActions: string[] = data.summary?.followUpActions || [];
+        if (followUpActions.length > 0) {
+          console.log('[reminder] LLM identified follow-up actions:', followUpActions);
+          setNeedsReminder(true);
+          setReminderReasons(followUpActions);
+        }
       } else {
         setCallSummary({
           outcome: 'completed',
@@ -209,18 +238,6 @@ function App() {
           setCallbackReasons(prevReasons => {
             if (!prevReasons.includes(callbackCheck.reason!)) {
               return [...prevReasons, callbackCheck.reason!];
-            }
-            return prevReasons;
-          });
-        }
-        
-        // Check if assistant promised a reminder/follow-up
-        const reminderCheck = checkAssistantForReminder(entry.text);
-        if (reminderCheck.needed && reminderCheck.reason) {
-          setNeedsReminder(true);
-          setReminderReasons(prevReasons => {
-            if (!prevReasons.includes(reminderCheck.reason!)) {
-              return [...prevReasons, reminderCheck.reason!];
             }
             return prevReasons;
           });
@@ -390,9 +407,41 @@ function App() {
         }
       }
       
+      // Debug: verify substitutions worked
+      console.log(`[getCallSystemPrompt] nameToUse="${nameToUse}", greeting still has [patient_name]:`, greeting.includes('[patient_name]'));
+      console.log(`[getCallSystemPrompt] scriptContent still has [patient_name]:`, scriptContent.includes('[patient_name]'));
+      console.log(`[getCallSystemPrompt] greeting first 100 chars:`, greeting.substring(0, 100));
+      
       // Build the full system prompt by combining base template + greeting + script + flow map
-      // Pass the flow map so branching rules are included explicitly
-      return buildFullSystemPrompt(scriptContent, greeting, customFlowMap || undefined);
+      // Substitute variables in the flow map too so branching rules match the actual script
+      let substitutedFlowMap = customFlowMap;
+      if (customFlowMap) {
+        const substituteAll = (text: string): string => {
+          let result = text;
+          if (nameToUse) {
+            result = result.replace(/\[patient_name\]/gi, nameToUse);
+          } else {
+            result = result.replace(/\[patient_name\]/gi, '');
+          }
+          for (const [vn, vv] of Object.entries(variableValues)) {
+            if (vv) {
+              result = result.replace(new RegExp(`\\[${vn}\\]`, 'gi'), vv);
+            }
+          }
+          // Strip any remaining unfilled placeholders
+          result = result.replace(/\[[a-z_]+\]/gi, '');
+          return result;
+        };
+        substitutedFlowMap = {
+          ...customFlowMap,
+          steps: customFlowMap.steps.map(step => ({
+            ...step,
+            question: substituteAll(step.question),
+            info: substituteAll(step.info || ''),
+          })),
+        };
+      }
+      return buildFullSystemPrompt(scriptContent, greeting, substitutedFlowMap || undefined);
     }
 
     // Use built-in scripts

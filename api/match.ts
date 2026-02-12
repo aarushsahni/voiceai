@@ -82,10 +82,13 @@ This is a voice transcript that may contain phonetic transcription errors. Consi
     }
 
     const parsed = JSON.parse(content);
-    const matchIdx = parsed.match || 0;
+    const matchIdx = Number(parsed.match) || 0;
+    
+    console.log(`[match] User: "${userResponse}" → LLM returned: ${JSON.stringify(parsed)}, matchIdx: ${matchIdx}`);
 
     if (matchIdx > 0 && matchIdx <= options.length) {
       const matchedOption = options[matchIdx - 1];
+      console.log(`[match] ✅ Matched to option ${matchIdx}: "${matchedOption.label}"`);
       return res.status(200).json({
         match: matchedOption.label,
         matchedIndex: matchIdx - 1,
@@ -93,6 +96,7 @@ This is a voice transcript that may contain phonetic transcription errors. Consi
       });
     }
 
+    console.log(`[match] ❌ No valid match (idx=${matchIdx}, options count=${options.length})`);
     return res.status(200).json({ match: null, matchedIndex: -1 });
   } catch (error) {
     console.error('Match error:', error);

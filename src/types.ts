@@ -61,4 +61,5 @@ export interface CallSummaryData {
   patientResponses: string[];
   keyFindings: string;
   language: string;
+  followUpActions?: string[];
 }

@@ -76,14 +76,22 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const SILENCE_DURATION_MS = 400;  // How long silence must persist to trigger callback
   const MAX_WAIT_FOR_SILENCE_MS = 15000;  // Maximum time to wait before giving up
 
+  // Keep refs to latest callbacks to avoid stale closures in WebRTC event handlers
+  const onTranscriptRef = useRef(onTranscript);
+  const onStatusChangeRef = useRef(onStatusChange);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
+  useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+
   const isSupported = typeof navigator !== 'undefined' && 
     'mediaDevices' in navigator && 
     'getUserMedia' in navigator.mediaDevices;
 
   const updateStatus = useCallback((newStatus: CallStatus) => {
     setStatus(newStatus);
-    onStatusChange?.(newStatus);
-  }, [onStatusChange]);
+    onStatusChangeRef.current?.(newStatus);
+  }, []);
 
   const addTranscript = useCallback((role: 'user' | 'assistant' | 'system', text: string) => {
     const entry: TranscriptEntry = {
@@ -92,8 +100,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       text,
       timestamp: new Date(),
     };
-    onTranscript?.(entry);
-  }, [onTranscript]);
+    onTranscriptRef.current?.(entry);
+  }, []);
 
   // Wait for audio to go silent (actual playback finished)
   // Uses RMS (Root Mean Square) of time-domain data for accurate silence detection
@@ -220,6 +228,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
     updateStatus('ended');
     addTranscript('system', 'Call ended');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [updateStatus, addTranscript]);
 
   const startCall = useCallback(async (
@@ -417,11 +426,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     } catch (error) {
       console.error('Call start error:', error);
       const message = error instanceof Error ? error.message : 'Failed to start call';
-      onError?.(message);
+      onErrorRef.current?.(message);
       updateStatus('error');
       addTranscript('system', `Error: ${message}`);
     }
-  }, [isSupported, updateStatus, addTranscript, onError, endCall, status]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSupported, updateStatus, addTranscript, endCall, status]);
 
   // Handle server events from data channel
   const handleServerEvent = useCallback((
@@ -571,7 +581,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         const errorData = data.error as { message?: string } | undefined;
         const errorMsg = errorData?.message || 'Unknown error';
         console.error('Server error:', errorMsg);
-        onError?.(errorMsg);
+        onErrorRef.current?.(errorMsg);
         break;
       }
 
@@ -579,7 +589,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         // Ignore other events
         break;
     }
-  }, [status, updateStatus, addTranscript, endCall, onError, waitForAudioSilence]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, updateStatus, addTranscript, endCall, waitForAudioSilence]);
 
   // Cleanup on unmount
   useEffect(() => {
