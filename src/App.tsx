@@ -9,7 +9,7 @@ import { FlowMap } from './components/FlowMap';
 import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
 import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
-import { ScriptConfig, ScriptSettings, ScriptMode, InputType } from './components/ScriptConfig';
+import { ScriptConfig, ScriptSettings, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
 
@@ -51,7 +51,6 @@ function App() {
 
   // Script configuration state
   const [scriptSettings, setScriptSettings] = useState<ScriptSettings>({
-    mode: 'deterministic',
     scriptChoice: 'ed-followup-v1',
     customScript: '',
     inputType: 'script',
@@ -308,7 +307,6 @@ function App() {
   const handleGenerateScript = useCallback(async (
     script: string,
     inputType: InputType,
-    mode: ScriptMode,
     conversionMode?: 'single' | 'multi-step'
   ): Promise<{ scriptContent: string; greeting: string; variables?: string[] } | null> => {
     setIsGenerating(true);
@@ -318,7 +316,7 @@ function App() {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ script, inputType, mode, conversionMode: conversionMode || 'single' }),
+        body: JSON.stringify({ script, inputType, conversionMode: conversionMode || 'single' }),
       });
 
       if (!response.ok) {
@@ -407,7 +405,7 @@ function App() {
     }
 
     // Use built-in scripts — apply variable substitution the same way
-    const rawPrompt = getSystemPrompt(scriptSettings.scriptChoice, scriptSettings.mode);
+    const rawPrompt = getSystemPrompt(scriptSettings.scriptChoice);
     return substituteVariables(rawPrompt);
   }, [scriptSettings, customFlowMap, substituteVariables]);
 
@@ -443,7 +441,6 @@ function App() {
     startCall(
       systemPrompt, 
       scriptSettings.voice, 
-      scriptSettings.mode,
       scriptSettings.variableValues || {}
     );
   }, [scriptSettings, getCallSystemPrompt, startCall]);

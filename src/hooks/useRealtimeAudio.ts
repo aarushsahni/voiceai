@@ -14,7 +14,6 @@ interface UseRealtimeAudioReturn {
   startCall: (
     systemPrompt?: string, 
     voice?: string, 
-    mode?: string,
     variableValues?: Record<string, string>
   ) => Promise<void>;
   endCall: () => void;
@@ -233,7 +232,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const startCall = useCallback(async (
     systemPrompt?: string,
     voice: string = 'cedar',
-    mode: string = 'deterministic',
     variableValues: Record<string, string> = {}
   ) => {
     if (!isSupported) {
@@ -262,7 +260,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         body: JSON.stringify({ 
           systemPrompt: systemPrompt || '', 
           voice,
-          mode,
           variableValues,  // All variables including patient_name
         }),
       });

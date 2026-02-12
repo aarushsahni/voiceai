@@ -16,7 +16,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { script, inputType, mode, conversionMode = 'single' } = req.body || {};
+    const { script, inputType, conversionMode = 'single' } = req.body || {};
 
     if (!script || typeof script !== 'string') {
       return res.status(400).json({ error: 'Script text is required' });
@@ -29,7 +29,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Single-prompt conversion (existing method)
     const systemInstructions = buildConversionInstructions();
-    const userMessage = buildUserMessage(script, inputType, mode);
+    const userMessage = buildUserMessage(script, inputType);
 
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -716,7 +716,7 @@ The LLM will listen to whatever they say and acknowledge it naturally.
 `;
 }
 
-function buildUserMessage(script: string, inputType: string, mode: string): string {
+function buildUserMessage(script: string, inputType: string): string {
   // Input type is determined by user button selection, not content detection
   if (inputType === 'script') {
     // SMS/IVR Script mode - parse as structured survey format

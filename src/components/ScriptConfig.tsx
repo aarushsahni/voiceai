@@ -2,12 +2,10 @@ import { useState, useEffect } from 'react';
 import { Settings, Wand2, FileText, ChevronDown, ChevronUp, Loader2, Save, Trash2 } from 'lucide-react';
 import { FlowMap as FlowMapType } from '../types';
 
-export type ScriptMode = 'deterministic';
 export type InputType = 'script' | 'prompt';
 export type ConversionMode = 'single' | 'multi-step';  // single = one LLM call, multi-step = parse→flow→adapt→assemble
 
 export interface ScriptSettings {
-  mode: ScriptMode;
   scriptChoice: string;
   customScript: string;
   inputType: InputType;
@@ -33,7 +31,6 @@ export interface SavedScript {
   generatedScriptContent: string;
   generatedGreeting: string;
   flowMap: FlowMapType | null;
-  mode: ScriptMode;
   variables: string[];
   savedAt: string;
 }
@@ -44,7 +41,7 @@ interface ScriptConfigProps {
   settings: ScriptSettings;
   onSettingsChange: (settings: ScriptSettings) => void;
   disabled?: boolean;
-  onGenerate?: (script: string, inputType: InputType, mode: ScriptMode, conversionMode?: ConversionMode) => Promise<GenerateResult | null>;
+  onGenerate?: (script: string, inputType: InputType, conversionMode?: ConversionMode) => Promise<GenerateResult | null>;
   isGenerating?: boolean;
   flowMap?: FlowMapType | null;  // Current flow map for saving
   onLoadFlowMap?: (flowMap: FlowMapType | null) => void;  // Callback to load flow map
@@ -131,7 +128,6 @@ export function ScriptConfig({
       generatedScriptContent: settings.generatedScriptContent,
       generatedGreeting: settings.generatedGreeting || '',
       flowMap: flowMap || null,
-      mode: settings.mode,
       variables: settings.variables || [],
       savedAt: new Date().toISOString(),
     };
@@ -148,7 +144,6 @@ export function ScriptConfig({
       customScript: script.customScript,
       generatedScriptContent: script.generatedScriptContent,
       generatedGreeting: script.generatedGreeting,
-      mode: script.mode,
       variables: script.variables || [],
       variableValues: { ...settings.variableValues }, // Preserve all variable values
     });
@@ -199,7 +194,7 @@ export function ScriptConfig({
   const handleGenerate = async () => {
     if (!onGenerate || !settings.customScript.trim()) return;
     
-    const result = await onGenerate(settings.customScript, settings.inputType, settings.mode, settings.conversionMode);
+    const result = await onGenerate(settings.customScript, settings.inputType, settings.conversionMode);
     if (result) {
       onSettingsChange({ 
         ...settings, 

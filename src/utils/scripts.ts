@@ -3,7 +3,6 @@ import { FlowMap } from '../types';
 // System prompt for ED follow-up — uses [patient_name] placeholder like all other variables
 export function getSystemPrompt(
   scriptId: string, 
-  mode: 'deterministic',
 ): string {
   return `
 Penn Medicine LGH ED follow-up call. Read scripts VERBATIM. Be warm and conversational.

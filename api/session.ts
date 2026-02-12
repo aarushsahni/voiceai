@@ -18,7 +18,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { 
       systemPrompt, 
       voice = 'cedar', 
-      mode = 'deterministic',
       variableValues = {}  // All variable values including patient_name
     } = req.body || {};
 
@@ -55,8 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     instructions = instructions.replace(/,\s*,/g, ',');
     instructions = instructions.replace(/\s{2,}/g, ' ');
 
-    // Temperature from voice5.py: 0.6 for deterministic, 0.9 for explorative
-    const temperature = mode === 'explorative' ? 0.9 : 0.6;
+    const temperature = 0.6;
 
     // Create ephemeral token via OpenAI API
     // Match voice5.py session.update configuration exactly
