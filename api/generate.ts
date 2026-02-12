@@ -431,7 +431,7 @@ Return ONLY valid JSON mapping element names to adapted text:
     body: JSON.stringify({
       model: 'gpt-5.2',
       input: prompt,
-      reasoning: { effort: 'low' }
+      reasoning: { effort: 'medium' }
     }),
   });
 
