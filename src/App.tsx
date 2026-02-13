@@ -90,13 +90,13 @@ function App() {
 
     return {
       ...baseMap,
-      steps: baseMap.steps.map(step => ({
+      steps: (baseMap.steps || []).map(step => ({
         ...step,
-        question: substituteForDisplay(step.question),
+        question: substituteForDisplay(step.question || ''),
         info: substituteForDisplay(step.info || ''),
-        options: step.options.map(opt => ({
+        options: (step.options || []).map(opt => ({
           ...opt,
-          label: substituteForDisplay(opt.label),
+          label: substituteForDisplay(opt.label || ''),
         })),
       })),
     };
