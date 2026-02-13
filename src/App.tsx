@@ -8,7 +8,7 @@ import { Transcript } from './components/Transcript';
 import { FlowMap } from './components/FlowMap';
 import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
-import { CallbackAlert, checkAssistantForCallback } from './components/CallbackAlert';
+import { CallbackAlert } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
@@ -44,10 +44,12 @@ function App() {
   // Callback tracking - flags when clinical team needs to follow up
   const [needsCallback, setNeedsCallback] = useState(false);
   const [callbackReasons, setCallbackReasons] = useState<string[]>([]);
+  const [callbackActions, setCallbackActions] = useState<string[]>([]);
   
   // Reminder tracking - flags when a reminder/follow-up was promised
   const [needsReminder, setNeedsReminder] = useState(false);
   const [reminderReasons, setReminderReasons] = useState<string[]>([]);
+  const [reminderActions, setReminderActions] = useState<string[]>([]);
   // Monotonic call run id to prevent stale async updates between calls
   const callRunIdRef = useRef(0);
 
@@ -136,19 +138,26 @@ function App() {
 
         // Prefer matchedIndex because it's unambiguous and tied to the current option list.
         let matchedLabel: string | null = null;
+        let matchedOption: { label: string; next: string; triggers_callback?: boolean; alerts?: Array<{ type: 'callback' | 'reminder'; reason?: string; action?: string }> } | null = null;
         if (typeof data.matchedIndex === 'number' && data.matchedIndex >= 0 && data.matchedIndex < step.options.length) {
-          matchedLabel = step.options[data.matchedIndex].label;
+          matchedOption = step.options[data.matchedIndex];
+          matchedLabel = matchedOption.label;
         } else if (data.match) {
           matchedLabel = data.match;
+          matchedOption = step.options.find(o => o.label.toLowerCase() === data.match.toLowerCase()) || null;
         } else {
           // Fallback: local matcher for robustness if API format drifts or LLM returns no match.
           matchedLabel = matchUserResponse(userResponse, stepId, flowMap);
           if (matchedLabel) {
             console.log(`[match] Fallback local match hit for step "${stepId}": "${matchedLabel}"`);
+            matchedOption = step.options.find(o => o.label.toLowerCase() === matchedLabel!.toLowerCase()) || null;
           }
         }
 
         if (matchedLabel) {
+          if (matchedOption) {
+            applyOptionAlerts(stepId, matchedOption);
+          }
           setMatchedOptions(prev => {
             const current = prev.get(stepId);
             if (current === matchedLabel) return prev;
@@ -163,6 +172,34 @@ function App() {
       }
     } catch (err) {
       console.error('[match] ❌ LLM match error:', err);
+    }
+  }, [applyOptionAlerts]);
+
+  const applyOptionAlerts = useCallback((stepId: string, option: { label: string; next: string; triggers_callback?: boolean; alerts?: Array<{ type: 'callback' | 'reminder'; reason?: string; action?: string }> }) => {
+    const alertDefs = option.alerts || [];
+
+    // Generic callback trigger support (works for both generated and built-in flows).
+    if (option.triggers_callback) {
+      setNeedsCallback(true);
+      setCallbackReasons(prev => prev.includes(option.label) ? prev : [...prev, option.label]);
+      const defaultAction = 'Review transcript and schedule callback within 24 hours';
+      setCallbackActions(prev => prev.includes(defaultAction) ? prev : [...prev, defaultAction]);
+    }
+
+    for (const alert of alertDefs) {
+      if (alert.type === 'callback') {
+        setNeedsCallback(true);
+        const reason = alert.reason || option.label || `Callback-related option selected in ${stepId}`;
+        setCallbackReasons(prev => prev.includes(reason) ? prev : [...prev, reason]);
+        const action = alert.action || 'Review transcript and schedule callback within 24 hours';
+        setCallbackActions(prev => prev.includes(action) ? prev : [...prev, action]);
+      } else if (alert.type === 'reminder') {
+        setNeedsReminder(true);
+        const reason = alert.reason || option.label || `Reminder-related option selected in ${stepId}`;
+        setReminderReasons(prev => prev.includes(reason) ? prev : [...prev, reason]);
+        const action = alert.action || 'Review follow-up action and schedule reminder as directed';
+        setReminderActions(prev => prev.includes(action) ? prev : [...prev, action]);
+      }
     }
   }, []);
 
@@ -205,12 +242,38 @@ function App() {
         }
         setCallSummary(data.summary);
         
-        // Set reminder alerts from LLM analysis of full transcript
+        // Set alerts from LLM summary of full transcript (post-call safety net).
         const followUpActions: string[] = data.summary?.followUpActions || [];
         if (followUpActions.length > 0) {
-          console.log('[reminder] LLM identified follow-up actions:', followUpActions);
-          setNeedsReminder(true);
-          setReminderReasons(followUpActions);
+          console.log('[alerts] LLM identified follow-up actions:', followUpActions);
+          const callbackActions = followUpActions.filter((a: string) => /\bcallback\b|call you back|team will call|someone will call/i.test(a));
+          const reminderActions = followUpActions.filter((a: string) => !/\bcallback\b|call you back|team will call|someone will call/i.test(a));
+
+          if (callbackActions.length > 0) {
+            setNeedsCallback(true);
+            setCallbackReasons(prev => {
+              const merged = [...prev];
+              callbackActions.forEach((r: string) => { if (!merged.includes(r)) merged.push(r); });
+              return merged;
+            });
+            setCallbackActions(prev => {
+              const defaultAction = 'Review transcript and schedule callback within 24 hours';
+              return prev.includes(defaultAction) ? prev : [...prev, defaultAction];
+            });
+          }
+
+          if (reminderActions.length > 0) {
+            setNeedsReminder(true);
+            setReminderReasons(prev => {
+              const merged = [...prev];
+              reminderActions.forEach((r: string) => { if (!merged.includes(r)) merged.push(r); });
+              return merged;
+            });
+            setReminderActions(prev => {
+              const defaultAction = 'Review follow-up action and schedule reminder as directed';
+              return prev.includes(defaultAction) ? prev : [...prev, defaultAction];
+            });
+          }
         }
       } else {
         if (callRunId !== callRunIdRef.current) return;
@@ -245,19 +308,6 @@ function App() {
 
       // Update flow tracking based on transcripts
       if (entry.role === 'assistant') {
-        // Check if assistant confirmed a callback is needed
-        // This is triggered when the model says "we'll have someone call you back"
-        const callbackCheck = checkAssistantForCallback(entry.text);
-        if (callbackCheck.needed && callbackCheck.reason) {
-          setNeedsCallback(true);
-          setCallbackReasons(prevReasons => {
-            if (!prevReasons.includes(callbackCheck.reason!)) {
-              return [...prevReasons, callbackCheck.reason!];
-            }
-            return prevReasons;
-          });
-        }
-        
         // Infer which step we're on based on assistant speech
         const newStep = inferFlowStep(
           updated.map((t) => ({ role: t.role, text: t.text })),
@@ -454,8 +504,10 @@ function App() {
     setCallSummary(null);
     setNeedsCallback(false);
     setCallbackReasons([]);
+    setCallbackActions([]);
     setNeedsReminder(false);
     setReminderReasons([]);
+    setReminderActions([]);
     setIsSummaryLoading(false);
 
     const systemPrompt = getCallSystemPrompt();
@@ -555,9 +607,11 @@ function App() {
             <CallbackAlert 
               needsCallback={needsCallback} 
               reasons={callbackReasons}
+              callbackActions={callbackActions}
               callEnded={status === 'ended'}
               needsReminder={needsReminder}
               reminderReasons={reminderReasons}
+              reminderActions={reminderActions}
             />
           </div>
         )}

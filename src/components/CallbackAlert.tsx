@@ -3,12 +3,22 @@ import { AlertTriangle, Phone, CheckCircle, Bell, Clock } from 'lucide-react';
 interface CallbackAlertProps {
   needsCallback: boolean;
   reasons: string[];
+  callbackActions?: string[];
   callEnded: boolean;
   needsReminder?: boolean;
   reminderReasons?: string[];
+  reminderActions?: string[];
 }
 
-export function CallbackAlert({ needsCallback, reasons, callEnded, needsReminder = false, reminderReasons = [] }: CallbackAlertProps) {
+export function CallbackAlert({
+  needsCallback,
+  reasons,
+  callbackActions = [],
+  callEnded,
+  needsReminder = false,
+  reminderReasons = [],
+  reminderActions = [],
+}: CallbackAlertProps) {
   const hasAlerts = needsCallback || needsReminder;
 
   if (!hasAlerts) {
@@ -61,9 +71,19 @@ export function CallbackAlert({ needsCallback, reasons, callEnded, needsReminder
                 </div>
               )}
               <div className="mt-3 p-2 bg-amber-100 rounded border border-amber-300">
-                <p className="text-xs text-amber-800 font-medium">
-                  ACTION: Review transcript and schedule callback within 24 hours
-                </p>
+                {callbackActions.length > 0 ? (
+                  <div className="space-y-1">
+                    {callbackActions.map((action, idx) => (
+                      <p key={idx} className="text-xs text-amber-800 font-medium">
+                        ACTION: {action}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-800 font-medium">
+                    ACTION: Review transcript and schedule callback within 24 hours
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -98,9 +118,19 @@ export function CallbackAlert({ needsCallback, reasons, callEnded, needsReminder
                 </div>
               )}
               <div className="mt-3 p-2 bg-blue-100 rounded border border-blue-300">
-                <p className="text-xs text-blue-800 font-medium">
-                  ACTION: Schedule follow-up reminder message for next month
-                </p>
+                {reminderActions.length > 0 ? (
+                  <div className="space-y-1">
+                    {reminderActions.map((action, idx) => (
+                      <p key={idx} className="text-xs text-blue-800 font-medium">
+                        ACTION: {action}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-blue-800 font-medium">
+                    ACTION: Review follow-up action and schedule reminder as directed
+                  </p>
+                )}
               </div>
             </div>
           </div>

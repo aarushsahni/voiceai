@@ -152,6 +152,9 @@ REVIEW RULES:
    - If two consecutive questions are tightly related and can be asked naturally together, combine them into one clearer question.
    - Do NOT combine if it would make the question too long/confusing or if branching outcomes differ.
    - Keep patient experience concise and conversational.
+10. Ensure option-level alert metadata exists where needed:
+    - callback-style options should include alerts with type "callback"
+    - reminder/follow-up promise options should include alerts with type "reminder"
 
 Return ONLY valid JSON in the same schema as input:
 {
@@ -407,6 +410,10 @@ TASK: Create a flow map JSON showing:
 7. ALWAYS include a "closing" step at the end with type "statement", question: "Thank you for your time. Take care, goodbye!" and options: [{"label": "end", "next": "end_call"}]
 8. The closing step must NOT contain any SMS-specific text like "Reply STOP to opt out" - this is a voice call, not SMS
 9. CALLBACK ROUTING RULE: if any option means the team will call the patient (callback intent), do NOT route directly to closing. Route to an explicit callback confirmation statement first (e.g., "I'll make sure someone from our team calls you back"), then continue to the normal next step.
+10. Add option-level alerts when appropriate (to avoid hardcoded alerts in app):
+   - Callback intent options: add alert {type: "callback", reason, action}
+   - Reminder/follow-up promise options: add alert {type: "reminder", reason, action}
+   - Only add alerts for options that represent actual operational follow-up actions
 
 Return ONLY valid JSON:
 {
@@ -419,7 +426,13 @@ Return ONLY valid JSON:
       "question": "The text content from the element",
       "info": "",
       "options": [
-        {"label": "Option text", "keywords": ["keyword1", "keyword2"], "next": "next_step_id or end_call"}
+        {
+          "label": "Option text",
+          "keywords": ["keyword1", "keyword2"],
+          "next": "next_step_id or end_call",
+          "triggers_callback": boolean,
+          "alerts": [{"type": "callback or reminder", "reason": "why this alert should fire", "action": "what staff should do"}]
+        }
       ]
     }
   ]
@@ -568,7 +581,19 @@ function ensureCallbackRouting(flowMap: any): { flowMap: any; changed: boolean; 
       // Already routed via callback confirmation step.
       if (nextStep && isCallbackStep(nextStep)) {
         if (!opt.triggers_callback) changed = true;
-        return { ...opt, triggers_callback: true };
+        const existingAlerts = Array.isArray(opt.alerts) ? opt.alerts : [];
+        const hasCallbackAlert = existingAlerts.some((a: any) => a?.type === 'callback');
+        return {
+          ...opt,
+          triggers_callback: true,
+          alerts: hasCallbackAlert
+            ? existingAlerts
+            : [...existingAlerts, {
+                type: 'callback',
+                reason: 'Patient requested a callback from the care team',
+                action: 'Review transcript and schedule callback within 24 hours',
+              }],
+        };
       }
 
       const callbackStepId = makeUniqueId(`callback_${step.id}_${idx + 1}`);
@@ -589,6 +614,14 @@ function ensureCallbackRouting(flowMap: any): { flowMap: any; changed: boolean; 
         ...opt,
         triggers_callback: true,
         next: callbackStepId,
+        alerts: [
+          ...((Array.isArray(opt.alerts) ? opt.alerts : []).filter((a: any) => a?.type !== 'callback')),
+          {
+            type: 'callback',
+            reason: 'Patient requested a callback from the care team',
+            action: 'Review transcript and schedule callback within 24 hours',
+          },
+        ],
       };
     });
   }
@@ -804,7 +837,13 @@ Return ONLY valid JSON with this schema:
         "question": string,
         "info": string,
         "options": [
-          {"label": string, "keywords": [string], "next": string, "triggers_callback": boolean}
+          {
+            "label": string,
+            "keywords": [string],
+            "next": string,
+            "triggers_callback": boolean,
+            "alerts": [{"type": "callback" | "reminder", "reason": string, "action": string}]
+          }
         ]
       }
     ]
@@ -908,6 +947,10 @@ Include these in the script instructions so the agent says them naturally.
     - If adjacent questions are clearly related and can be asked naturally together, combine them into one concise question.
     - Do NOT combine unrelated topics or steps with different branching outcomes.
     - Prefer fewer, clearer questions when it improves flow.
+13. OPTION ALERT METADATA:
+    - Add alerts on options when they imply operational follow-up.
+    - Callback-style options → alerts include {type:"callback", reason, action}
+    - Reminder/follow-up promise options → alerts include {type:"reminder", reason, action}
 
 === EXAMPLE: SMS → IVR ===
 SMS input:
