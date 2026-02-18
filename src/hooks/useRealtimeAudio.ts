@@ -63,6 +63,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const lastAudioDeltaTimeRef = useRef<number>(0);
   const transcriptLengthRef = useRef<number>(0);
   const eventCountRef = useRef<number>(0);
+  const hasAnyAssistantTranscriptRef = useRef<boolean>(false);
+  const initialGreetingRetryCountRef = useRef<number>(0);
+  const initialGreetingWatchdogRef = useRef<number | null>(null);
   
   // Track if we're currently in a response (to avoid stale closure issues with status state)
   const inResponseRef = useRef<boolean>(false);
@@ -259,6 +262,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       waitingForGoodbyeRef.current = false;
       inResponseRef.current = false;
       transcriptLengthRef.current = 0;
+      hasAnyAssistantTranscriptRef.current = false;
+      initialGreetingRetryCountRef.current = 0;
+      if (initialGreetingWatchdogRef.current) {
+        clearTimeout(initialGreetingWatchdogRef.current);
+        initialGreetingWatchdogRef.current = null;
+      }
 
       // 1. Get ephemeral token from our API
       const sessionResponse = await fetch('/api/session', {
@@ -369,6 +378,27 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         console.log('[debug-call] datachannel readyState:', dc.readyState);
         updateStatus('connected');
         addTranscript('system', 'Connected - call starting');
+
+        const sendResponseCreate = (reason: string, withInstruction: boolean = false) => {
+          if (dc.readyState !== 'open') {
+            console.log('[debug-call] skipped response.create; data channel not open', { reason, state: dc.readyState });
+            return;
+          }
+          try {
+            const payload = withInstruction
+              ? {
+                  type: 'response.create',
+                  response: {
+                    instructions: 'Begin now with the greeting and first script line.',
+                  },
+                }
+              : { type: 'response.create' };
+            console.log('[debug-call] sending response.create', { reason, withInstruction });
+            dc.send(JSON.stringify(payload));
+          } catch (sendErr) {
+            console.error('[debug-call] failed to send response.create:', sendErr, { reason });
+          }
+        };
         
         // Greeting preroll delay from voice5.py (GREETING_PREROLL_SEC = 0.2)
         // Small delay before sending initial response to ensure connection is stable
@@ -376,13 +406,19 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           // Mute mic BEFORE triggering greeting (NO_BARGE_IN)
           assistantSpeakingRef.current = true;
           updateMicMute();
-          try {
-            const payload = JSON.stringify({ type: 'response.create' });
-            console.log('[debug-call] sending initial response.create');
-            dc.send(payload);
-          } catch (sendErr) {
-            console.error('[debug-call] failed to send initial response.create:', sendErr);
+          sendResponseCreate('initial-open');
+
+          // Watchdog: if no assistant transcript shows up soon, retry once with explicit instruction.
+          if (initialGreetingWatchdogRef.current) {
+            clearTimeout(initialGreetingWatchdogRef.current);
           }
+          initialGreetingWatchdogRef.current = window.setTimeout(() => {
+            if (!hasAnyAssistantTranscriptRef.current && initialGreetingRetryCountRef.current < 1) {
+              initialGreetingRetryCountRef.current += 1;
+              console.log('[debug-call] initial greeting watchdog fired; retrying response.create');
+              sendResponseCreate('initial-watchdog-retry', true);
+            }
+          }, 2500);
         }, 200);
       };
 
@@ -538,6 +574,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       case 'response.audio_transcript.delta': {
         // Track when we receive audio deltas to estimate playback
         lastAudioDeltaTimeRef.current = Date.now();
+        hasAnyAssistantTranscriptRef.current = true;
+        if (initialGreetingWatchdogRef.current) {
+          clearTimeout(initialGreetingWatchdogRef.current);
+          initialGreetingWatchdogRef.current = null;
+        }
         
         // Assistant is speaking - first audio chunk (use ref to avoid stale closure)
         if (!inResponseRef.current) {
@@ -570,6 +611,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         // Full assistant transcript available
         const transcript = (data.transcript as string) || currentAssistantTextRef.current;
         if (transcript) {
+          hasAnyAssistantTranscriptRef.current = true;
+          if (initialGreetingWatchdogRef.current) {
+            clearTimeout(initialGreetingWatchdogRef.current);
+            initialGreetingWatchdogRef.current = null;
+          }
           addTranscript('assistant', transcript);
           
           // Check for goodbye - but DON'T end call yet
@@ -589,6 +635,29 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         inResponseRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
+        console.log('[debug-call] response.done received', {
+          transcriptLen,
+          hasAnyAssistantTranscript: hasAnyAssistantTranscriptRef.current,
+          goodbyeDetected: goodbyeDetectedRef.current,
+        });
+
+        // Sometimes first response is empty. Retry once to force a spoken intro.
+        if (!goodbyeDetectedRef.current && transcriptLen === 0 && !hasAnyAssistantTranscriptRef.current && dataChannel?.readyState === 'open') {
+          if (initialGreetingRetryCountRef.current < 1) {
+            initialGreetingRetryCountRef.current += 1;
+            console.log('[debug-call] empty first response; retrying response.create with explicit instruction');
+            try {
+              dataChannel.send(JSON.stringify({
+                type: 'response.create',
+                response: {
+                  instructions: 'Begin now with the greeting and first script line.',
+                },
+              }));
+            } catch (sendErr) {
+              console.error('[debug-call] failed retry after empty response.done:', sendErr);
+            }
+          }
+        }
         
         // If goodbye was detected, wait for remaining audio buffer to play then end call
         if (goodbyeDetectedRef.current) {
@@ -646,6 +715,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (initialGreetingWatchdogRef.current) {
+        clearTimeout(initialGreetingWatchdogRef.current);
+      }
       if (audioMonitorIntervalRef.current) {
         clearInterval(audioMonitorIntervalRef.current);
       }
