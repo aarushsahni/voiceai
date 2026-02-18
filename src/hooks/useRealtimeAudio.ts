@@ -62,6 +62,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Track last audio delta time to estimate when audio finishes
   const lastAudioDeltaTimeRef = useRef<number>(0);
   const transcriptLengthRef = useRef<number>(0);
+  const eventCountRef = useRef<number>(0);
   
   // Track if we're currently in a response (to avoid stale closure issues with status state)
   const inResponseRef = useRef<boolean>(false);
@@ -242,6 +243,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     try {
       updateStatus('connecting');
       addTranscript('system', 'Starting call...');
+      console.log('[debug-call] startCall invoked', {
+        hasSystemPrompt: Boolean(systemPrompt && systemPrompt.trim().length > 0),
+        promptLength: systemPrompt?.length || 0,
+        voice,
+        variableKeys: Object.keys(variableValues || {}),
+      });
 
       // Reset state
       latenciesRef.current = [];
@@ -263,17 +270,32 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           variableValues,  // All variables including patient_name
         }),
       });
+      console.log('[debug-call] /api/session response status:', sessionResponse.status, sessionResponse.statusText);
 
       if (!sessionResponse.ok) {
         const error = await sessionResponse.json();
+        console.log('[debug-call] /api/session error payload:', error);
         throw new Error(error.error || 'Failed to create session');
       }
 
       const { client_secret } = await sessionResponse.json();
+      console.log('[debug-call] got client_secret:', {
+        hasValue: Boolean(client_secret?.value),
+        expiresAt: client_secret?.expires_at,
+      });
       
       // 2. Create peer connection
       const pc = new RTCPeerConnection();
       peerConnectionRef.current = pc;
+      pc.onconnectionstatechange = () => {
+        console.log('[debug-call] pc.connectionState:', pc.connectionState);
+      };
+      pc.oniceconnectionstatechange = () => {
+        console.log('[debug-call] pc.iceConnectionState:', pc.iceConnectionState);
+      };
+      pc.onicegatheringstatechange = () => {
+        console.log('[debug-call] pc.iceGatheringState:', pc.iceGatheringState);
+      };
 
       // 3. Set up audio element for playback with optimized settings
       const audioEl = document.createElement('audio');
@@ -344,6 +366,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       dc.onopen = () => {
         console.log('Data channel open');
+        console.log('[debug-call] datachannel readyState:', dc.readyState);
         updateStatus('connected');
         addTranscript('system', 'Connected - call starting');
         
@@ -353,13 +376,26 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           // Mute mic BEFORE triggering greeting (NO_BARGE_IN)
           assistantSpeakingRef.current = true;
           updateMicMute();
-          dc.send(JSON.stringify({ type: 'response.create' }));
+          try {
+            const payload = JSON.stringify({ type: 'response.create' });
+            console.log('[debug-call] sending initial response.create');
+            dc.send(payload);
+          } catch (sendErr) {
+            console.error('[debug-call] failed to send initial response.create:', sendErr);
+          }
         }, 200);
       };
 
       dc.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          eventCountRef.current += 1;
+          if (eventCountRef.current <= 25 || data.type === 'error') {
+            console.log('[debug-call] incoming event', {
+              idx: eventCountRef.current,
+              type: data.type,
+            });
+          }
           handleServerEvent(data, updateMicMute, dc);
         } catch (e) {
           console.error('Failed to parse server event:', e);
@@ -394,6 +430,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       // 6. Create and set local description (offer)
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.log('[debug-call] local offer set', {
+        sdpLength: offer.sdp?.length || 0,
+      });
 
       // 7. Send offer to OpenAI and get answer
       const sdpResponse = await fetch(
@@ -409,10 +448,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       );
 
       if (!sdpResponse.ok) {
+        const sdpErrText = await sdpResponse.text();
+        console.log('[debug-call] realtime SDP error body:', sdpErrText);
         throw new Error('Failed to connect to OpenAI Realtime');
       }
 
       const answerSdp = await sdpResponse.text();
+      console.log('[debug-call] got answer SDP', { sdpLength: answerSdp?.length || 0 });
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       console.log('WebRTC connection established');
@@ -454,6 +496,10 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       case 'input_audio_buffer.speech_stopped':
         speechStoppedTimeRef.current = Date.now();
         updateStatus('processing');
+        console.log('[debug-call] speech_stopped received; scheduling response.create', {
+          delayMs: RESPONSE_DELAY_MS,
+          dcState: dataChannel?.readyState,
+        });
         
         // Schedule response creation with delay (like voice5.py _schedule_delayed_response)
         if (responseDelayTimerRef.current) {
@@ -461,7 +507,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         }
         responseDelayTimerRef.current = window.setTimeout(() => {
           if (dataChannel && dataChannel.readyState === 'open') {
-            dataChannel.send(JSON.stringify({ type: 'response.create' }));
+            try {
+              console.log('[debug-call] sending delayed response.create after speech_stopped');
+              dataChannel.send(JSON.stringify({ type: 'response.create' }));
+            } catch (sendErr) {
+              console.error('[debug-call] failed to send delayed response.create:', sendErr);
+            }
+          } else {
+            console.log('[debug-call] skipped delayed response.create; data channel not open', {
+              dcState: dataChannel?.readyState,
+            });
           }
           responseDelayTimerRef.current = null;
         }, RESPONSE_DELAY_MS);
