@@ -250,6 +250,40 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     }
 
     try {
+      // Force-clean any stale resources from a previous interrupted session.
+      if (responseDelayTimerRef.current) {
+        clearTimeout(responseDelayTimerRef.current);
+        responseDelayTimerRef.current = null;
+      }
+      if (audioMonitorIntervalRef.current) {
+        clearInterval(audioMonitorIntervalRef.current);
+        audioMonitorIntervalRef.current = null;
+      }
+      if (dataChannelRef.current) {
+        try { dataChannelRef.current.close(); } catch {}
+        dataChannelRef.current = null;
+      }
+      if (peerConnectionRef.current) {
+        try { peerConnectionRef.current.close(); } catch {}
+        peerConnectionRef.current = null;
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => {
+          try { track.stop(); } catch {}
+        });
+        mediaStreamRef.current = null;
+      }
+      if (audioElementRef.current) {
+        audioElementRef.current.srcObject = null;
+        audioElementRef.current = null;
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+      analyserRef.current = null;
+      onAudioSilenceCallbackRef.current = null;
+
       updateStatus('connecting');
       addTranscript('system', 'Starting call...');
 
