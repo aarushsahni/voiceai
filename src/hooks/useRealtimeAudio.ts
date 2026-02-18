@@ -379,6 +379,31 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         updateStatus('connected');
         addTranscript('system', 'Connected - call starting');
 
+        const sendKickoffUserItem = (reason: string) => {
+          if (dc.readyState !== 'open') return false;
+          try {
+            const kickoffPayload = {
+              type: 'conversation.item.create',
+              item: {
+                type: 'message',
+                role: 'user',
+                content: [
+                  {
+                    type: 'input_text',
+                    text: 'Start the call now with your greeting and first question.',
+                  },
+                ],
+              },
+            };
+            console.log('[debug-call] sending kickoff conversation.item.create', { reason });
+            dc.send(JSON.stringify(kickoffPayload));
+            return true;
+          } catch (err) {
+            console.error('[debug-call] failed to send kickoff item:', err, { reason });
+            return false;
+          }
+        };
+
         const sendResponseCreate = (reason: string, withInstruction: boolean = false) => {
           if (dc.readyState !== 'open') {
             console.log('[debug-call] skipped response.create; data channel not open', { reason, state: dc.readyState });
@@ -406,6 +431,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           // Mute mic BEFORE triggering greeting (NO_BARGE_IN)
           assistantSpeakingRef.current = true;
           updateMicMute();
+          sendKickoffUserItem('initial-open');
           sendResponseCreate('initial-open');
 
           // Watchdog: if no assistant transcript shows up soon, retry once with explicit instruction.
@@ -416,6 +442,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             if (!hasAnyAssistantTranscriptRef.current && initialGreetingRetryCountRef.current < 1) {
               initialGreetingRetryCountRef.current += 1;
               console.log('[debug-call] initial greeting watchdog fired; retrying response.create');
+              sendKickoffUserItem('initial-watchdog-retry');
               sendResponseCreate('initial-watchdog-retry', true);
             }
           }, 2500);
@@ -645,8 +672,21 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         if (!goodbyeDetectedRef.current && transcriptLen === 0 && !hasAnyAssistantTranscriptRef.current && dataChannel?.readyState === 'open') {
           if (initialGreetingRetryCountRef.current < 1) {
             initialGreetingRetryCountRef.current += 1;
-            console.log('[debug-call] empty first response; retrying response.create with explicit instruction');
+            console.log('[debug-call] empty first response; retrying with kickoff item + response.create');
             try {
+              dataChannel.send(JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                  type: 'message',
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'input_text',
+                      text: 'Start the call now with your greeting and first question.',
+                    },
+                  ],
+                },
+              }));
               dataChannel.send(JSON.stringify({
                 type: 'response.create',
                 response: {
