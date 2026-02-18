@@ -91,6 +91,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     onStatusChangeRef.current?.(newStatus);
   }, []);
 
+  const fetchWithTimeout = useCallback(async (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }, []);
+
   const addTranscript = useCallback((role: 'user' | 'assistant' | 'system', text: string) => {
     const entry: TranscriptEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -254,7 +264,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       transcriptLengthRef.current = 0;
 
       // 1. Get ephemeral token from our API
-      const sessionResponse = await fetch('/api/session', {
+      addTranscript('system', 'Requesting secure session...');
+      const sessionResponse = await fetchWithTimeout('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -262,14 +273,21 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           voice,
           variableValues,  // All variables including patient_name
         }),
-      });
+      }, 15000);
 
       if (!sessionResponse.ok) {
-        const error = await sessionResponse.json();
-        throw new Error(error.error || 'Failed to create session');
+        let message = 'Failed to create session';
+        try {
+          const error = await sessionResponse.json();
+          message = error.error || message;
+        } catch {
+          // ignore JSON parse issues and keep generic message
+        }
+        throw new Error(message);
       }
 
       const { client_secret } = await sessionResponse.json();
+      addTranscript('system', 'Session ready. Waiting for microphone access...');
       
       // 2. Create peer connection
       const pc = new RTCPeerConnection();
@@ -321,6 +339,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         } 
       });
       mediaStreamRef.current = stream;
+      addTranscript('system', 'Microphone connected. Establishing audio link...');
 
       // Add mic track to peer connection
       // We'll mute/unmute this track based on assistant speaking (NO_BARGE_IN)
@@ -396,7 +415,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       await pc.setLocalDescription(offer);
 
       // 7. Send offer to OpenAI and get answer
-      const sdpResponse = await fetch(
+      const sdpResponse = await fetchWithTimeout(
         'https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
         {
           method: 'POST',
@@ -405,7 +424,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             'Content-Type': 'application/sdp',
           },
           body: offer.sdp,
-        }
+        },
+        20000
       );
 
       if (!sdpResponse.ok) {
@@ -416,17 +436,23 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       console.log('WebRTC connection established');
+      addTranscript('system', 'Realtime link established. Starting assistant...');
 
     } catch (error) {
       console.error('Call start error:', error);
-      const message = error instanceof Error ? error.message : 'Failed to start call';
+      const isAbort = error instanceof DOMException && error.name === 'AbortError';
+      const message = isAbort
+        ? 'Connection timed out while starting the call. Please try again.'
+        : error instanceof Error
+        ? error.message
+        : 'Failed to start call';
       onErrorRef.current?.(message);
       updateStatus('error');
       addTranscript('system', `Error: ${message}`);
     }
   // All deps are stable (use refs internally) so this callback is created once
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSupported, updateStatus, addTranscript, endCall]);
+  }, [isSupported, updateStatus, addTranscript, endCall, fetchWithTimeout]);
 
   // Handle server events from data channel
   const handleServerEvent = useCallback((
