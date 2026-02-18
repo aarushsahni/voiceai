@@ -75,7 +75,8 @@ Return ONLY valid JSON with this schema:
   "patientResponses": [string],  // Short phrases summarizing each key response
   "keyFindings": string,  // 1-2 sentence summary of important information
   "language": "English" | "Spanish" | "Unknown",
-  "followUpActions": [string]  // Any follow-up actions the AGENT explicitly promised or confirmed to the patient
+  "callbackActions": [string],  // Actions where team will call patient back
+  "reminderActions": [string]   // Non-callback follow-up reminders/promised actions
 }
 
 CRITICAL RULES:
@@ -84,13 +85,9 @@ CRITICAL RULES:
 3. patientResponses should be short labels like "Feeling as expected", "Left because wait was too long", "Went home after"
 4. Be factual and objective - no interpretation
 5. If call didn't complete, set outcome appropriately
-6. followUpActions: List ONLY actions the agent CONFIRMED will happen based on the patient's choices. Examples:
-   - "Lab slips will be mailed to patient" (agent confirmed mailing after patient chose mail)
-   - "Someone from the team will call the patient back" (agent confirmed a callback)
-   - "Reminder message will be sent next month" (agent confirmed sending a reminder)
-   - "Records will be updated" (agent confirmed updating records)
-   DO NOT include actions that were merely described as options but not selected by the patient.
-   If no follow-up actions were confirmed, return an empty array.`,
+6. callbackActions: Include ONLY confirmed callback-type actions (team will call patient back).
+7. reminderActions: Include ONLY confirmed non-callback follow-up actions (e.g., reminder message, lab slips mailed, records update).
+8. DO NOT include actions that were merely described as options but not selected by the patient.`,
           },
           {
             role: 'user',
@@ -112,7 +109,8 @@ CRITICAL RULES:
           patientResponses: [],
           keyFindings: makeLocalSummary(),
           language: 'Unknown',
-          followUpActions: [],
+          callbackActions: [],
+          reminderActions: [],
         }
       });
     }
@@ -128,7 +126,8 @@ CRITICAL RULES:
           patientResponses: [],
           keyFindings: makeLocalSummary(),
           language: 'Unknown',
-          followUpActions: [],
+          callbackActions: [],
+          reminderActions: [],
         }
       });
     }
@@ -143,7 +142,8 @@ CRITICAL RULES:
           patientResponses: parsed.patientResponses || [],
           keyFindings: parsed.keyFindings || '',
           language: parsed.language || 'Unknown',
-          followUpActions: parsed.followUpActions || [],
+          callbackActions: parsed.callbackActions || [],
+          reminderActions: parsed.reminderActions || [],
         }
       });
     } catch {
@@ -155,7 +155,8 @@ CRITICAL RULES:
           patientResponses: [],
           keyFindings: content,
           language: 'Unknown',
-          followUpActions: [],
+          callbackActions: [],
+          reminderActions: [],
         }
       });
     }
@@ -168,7 +169,8 @@ CRITICAL RULES:
         patientResponses: [],
         keyFindings: 'Call completed. Unable to generate detailed summary.',
         language: 'Unknown',
-        followUpActions: [],
+        callbackActions: [],
+        reminderActions: [],
       }
     });
   }

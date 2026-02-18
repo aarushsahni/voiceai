@@ -19,11 +19,6 @@ export interface FlowOption {
   keywords?: string[];  // voice5.py includes keywords for matching
   next: string;
   triggers_callback?: boolean;  // If true, this option triggers a callback request
-  alerts?: Array<{
-    type: 'callback' | 'reminder';
-    reason?: string;
-    action?: string;
-  }>;
 }
 
 export interface FlowMap {
@@ -66,5 +61,6 @@ export interface CallSummaryData {
   patientResponses: string[];
   keyFindings: string;
   language: string;
-  followUpActions?: string[];
+  callbackActions?: string[];
+  reminderActions?: string[];
 }
