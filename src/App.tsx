@@ -175,7 +175,7 @@ function App() {
     }
   }, [applyOptionAlerts]);
 
-  const applyOptionAlerts = useCallback((stepId: string, option: { label: string; next: string; triggers_callback?: boolean; alerts?: Array<{ type: 'callback' | 'reminder'; reason?: string; action?: string }> }) => {
+  function applyOptionAlerts(stepId: string, option: { label: string; next: string; triggers_callback?: boolean; alerts?: Array<{ type: 'callback' | 'reminder'; reason?: string; action?: string }> }) {
     const alertDefs = option.alerts || [];
 
     // Generic callback trigger support (works for both generated and built-in flows).
@@ -201,7 +201,7 @@ function App() {
         setReminderActions(prev => prev.includes(action) ? prev : [...prev, action]);
       }
     }
-  }, []);
+  }
 
   // Generate call summary (same as voice5.py generate_call_summary)
   const generateCallSummary = useCallback(async (
