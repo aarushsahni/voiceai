@@ -410,14 +410,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             return;
           }
           try {
-            const payload = withInstruction
-              ? {
-                  type: 'response.create',
-                  response: {
-                    instructions: 'Begin now with the greeting and first script line.',
-                  },
-                }
-              : { type: 'response.create' };
+            const payload: Record<string, unknown> = {
+              type: 'response.create',
+              response: {
+                modalities: ['audio', 'text'],
+              },
+            };
+            if (withInstruction) {
+              (payload.response as Record<string, unknown>).instructions =
+                'Begin now with the greeting and first script line.';
+            }
             console.log('[debug-call] sending response.create', { reason, withInstruction });
             dc.send(JSON.stringify(payload));
           } catch (sendErr) {
@@ -572,7 +574,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           if (dataChannel && dataChannel.readyState === 'open') {
             try {
               console.log('[debug-call] sending delayed response.create after speech_stopped');
-              dataChannel.send(JSON.stringify({ type: 'response.create' }));
+              dataChannel.send(JSON.stringify({
+                type: 'response.create',
+                response: {
+                  modalities: ['audio', 'text'],
+                },
+              }));
             } catch (sendErr) {
               console.error('[debug-call] failed to send delayed response.create:', sendErr);
             }
@@ -662,10 +669,31 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         inResponseRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
+        const responseObj = data.response as any;
+        let outputText = '';
+        if (Array.isArray(responseObj?.output)) {
+          for (const outItem of responseObj.output) {
+            if (Array.isArray(outItem?.content)) {
+              for (const c of outItem.content) {
+                if (typeof c?.text === 'string' && c.text.trim()) {
+                  outputText += (outputText ? ' ' : '') + c.text.trim();
+                }
+              }
+            }
+          }
+        }
+        if (!hasAnyAssistantTranscriptRef.current && outputText) {
+          console.log('[debug-call] response.done had output text but no audio transcript');
+          hasAnyAssistantTranscriptRef.current = true;
+          addTranscript('assistant', outputText);
+        }
         console.log('[debug-call] response.done received', {
           transcriptLen,
           hasAnyAssistantTranscript: hasAnyAssistantTranscriptRef.current,
           goodbyeDetected: goodbyeDetectedRef.current,
+          responseStatus: responseObj?.status,
+          outputItems: Array.isArray(responseObj?.output) ? responseObj.output.length : 0,
+          outputTextLen: outputText.length,
         });
 
         // Sometimes first response is empty. Retry once to force a spoken intro.
@@ -690,6 +718,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
               dataChannel.send(JSON.stringify({
                 type: 'response.create',
                 response: {
+                  modalities: ['audio', 'text'],
                   instructions: 'Begin now with the greeting and first script line.',
                 },
               }));
