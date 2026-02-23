@@ -28,8 +28,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    const normalizedOptions = options.filter((opt: any) => opt && typeof opt.label === 'string');
+    if (!normalizedOptions.length) {
+      return res.status(200).json({
+        match: null,
+        matchedIndex: -1,
+        debug: { stage: 'invalid_options', receivedCount: options.length },
+      });
+    }
+
     // Build options string for the prompt (exact labels only)
-    const optionsStr = options
+    const optionsStr = normalizedOptions
       .map((opt: { label: string }, i: number) => `${i + 1}. ${opt.label}`)
       .join('\n');
 
@@ -62,7 +71,7 @@ Be VERY careful - incorrect matches affect patient care.`,
             },
             {
               role: 'user',
-              content: `Question: ${question || 'N/A'}
+                content: `Question: ${question || 'N/A'}
 
 Patient said: "${userResponse}"
 
@@ -87,7 +96,16 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
     if (!response.ok) {
       const errorText = await response.text();
       console.error('OpenAI match error:', errorText);
-      return res.status(200).json({ match: null, matchedIndex: -1 });
+      return res.status(200).json({
+        match: null,
+        matchedIndex: -1,
+        debug: {
+          stage: 'openai_first_pass_error',
+          status: response.status,
+          statusText: response.statusText,
+          errorText: errorText.slice(0, 1200),
+        },
+      });
     }
 
     const data = await response.json();
@@ -95,11 +113,28 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
     console.log('[debug-match-api] first pass raw content:', content);
 
     if (!content) {
-      return res.status(200).json({ match: null, matchedIndex: -1 });
+      return res.status(200).json({
+        match: null,
+        matchedIndex: -1,
+        debug: { stage: 'empty_content_first_pass' },
+      });
     }
 
-    const parsed = JSON.parse(content);
-    let llmMatchIdx = extractMatchIndex(parsed.match, options);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(content);
+    } catch (parseError: any) {
+      return res.status(200).json({
+        match: null,
+        matchedIndex: -1,
+        debug: {
+          stage: 'json_parse_error_first_pass',
+          message: parseError?.message || 'unknown parse error',
+          rawContent: String(content).slice(0, 1200),
+        },
+      });
+    }
+    let llmMatchIdx = extractMatchIndex(parsed.match, normalizedOptions);
     let llmConfidence = Number(parsed.confidence) || 0;
     console.log('[debug-match-api] first pass parsed:', { parsed, llmMatchIdx, llmConfidence });
 
@@ -113,15 +148,16 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
         if (retryContent) {
           try {
             const retryParsed = JSON.parse(retryContent);
-            const retryIdx = extractMatchIndex(retryParsed.match, options);
+            const retryIdx = extractMatchIndex(retryParsed.match, normalizedOptions);
             const retryConfidence = Number(retryParsed.confidence) || 0;
             console.log(`[match] retry raw: ${JSON.stringify(retryParsed)}, idx: ${retryIdx}, confidence: ${retryConfidence}`);
-            if (retryIdx > 0 && retryIdx <= options.length) {
+            if (retryIdx > 0 && retryIdx <= normalizedOptions.length) {
               llmMatchIdx = retryIdx;
               llmConfidence = retryConfidence;
               console.log(`[match] retry picked option ${retryIdx} (confidence ${retryConfidence})`);
             }
-          } catch {
+          } catch (retryParseError: any) {
+            console.log('[debug-match-api] retry parse error:', retryParseError?.message || retryParseError);
             // keep original result
           }
         }
@@ -134,22 +170,43 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
       `[match] User: "${userResponse}" → LLM: ${JSON.stringify(parsed)}, finalMatchIdx: ${matchIdx}, source: llm`
     );
 
-    if (matchIdx > 0 && matchIdx <= options.length) {
-      const matchedOption = options[matchIdx - 1];
+    if (matchIdx > 0 && matchIdx <= normalizedOptions.length) {
+      const matchedOption = normalizedOptions[matchIdx - 1];
       console.log(`[match] ✅ Matched to option ${matchIdx}: "${matchedOption.label}"`);
       return res.status(200).json({
         match: matchedOption.label,
         matchedIndex: matchIdx - 1,
         confidence: llmConfidence,
+        debug: {
+          stage: 'matched',
+          llmMatchIdx,
+          llmConfidence,
+        },
       });
     }
 
-    console.log(`[match] ❌ No valid match (idx=${matchIdx}, options count=${options.length})`);
-    console.log('[debug-match-api] returning null match for request:', { userResponse, options: options.map((o: any) => o.label) });
-    return res.status(200).json({ match: null, matchedIndex: -1 });
+    console.log(`[match] ❌ No valid match (idx=${matchIdx}, options count=${normalizedOptions.length})`);
+    console.log('[debug-match-api] returning null match for request:', { userResponse, options: normalizedOptions.map((o: any) => o.label) });
+    return res.status(200).json({
+      match: null,
+      matchedIndex: -1,
+      debug: {
+        stage: 'no_valid_match',
+        llmMatchIdx,
+        llmConfidence,
+        parsed,
+      },
+    });
   } catch (error) {
     console.error('Match error:', error);
-    return res.status(200).json({ match: null, matchedIndex: -1 });
+    return res.status(200).json({
+      match: null,
+      matchedIndex: -1,
+      debug: {
+        stage: 'handler_exception',
+        error: String(error),
+      },
+    });
   }
 }
 
