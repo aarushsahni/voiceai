@@ -84,7 +84,6 @@ ${optionsStr}
 Use full conversation context to disambiguate intent, but prioritize what the patient most recently said for this question.`,
             },
           ],
-          temperature: 0.1,
           max_completion_tokens: 50,
           response_format: { type: 'json_object' },
         }),
