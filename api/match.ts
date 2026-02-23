@@ -108,14 +108,18 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    console.log('[debug-match-api] first pass raw content:', content);
+    const content = extractAssistantContent(data);
+    console.log('[debug-match-api] first pass extracted content:', content);
+    console.log('[debug-match-api] first pass raw choice message:', data?.choices?.[0]?.message);
 
     if (!content) {
       return res.status(200).json({
         match: null,
         matchedIndex: -1,
-        debug: { stage: 'empty_content_first_pass' },
+        debug: {
+          stage: 'empty_content_first_pass',
+          rawChoiceMessage: data?.choices?.[0]?.message ?? null,
+        },
       });
     }
 
@@ -142,8 +146,9 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
       const retry = await callMatcher(true);
       if (retry.ok) {
         const retryData = await retry.json();
-        const retryContent = retryData.choices?.[0]?.message?.content;
-        console.log('[debug-match-api] retry raw content:', retryContent);
+        const retryContent = extractAssistantContent(retryData);
+        console.log('[debug-match-api] retry extracted content:', retryContent);
+        console.log('[debug-match-api] retry raw choice message:', retryData?.choices?.[0]?.message);
         if (retryContent) {
           try {
             const retryParsed = JSON.parse(retryContent);
@@ -228,4 +233,36 @@ function extractMatchIndex(rawMatch: unknown, options: Array<{ label: string }>)
   }
 
   return 0;
+}
+
+function extractAssistantContent(data: any): string {
+  const message = data?.choices?.[0]?.message;
+  const content = message?.content;
+
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((part: any) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part.text === 'string') return part.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (parts) return parts;
+  }
+
+  if (typeof data?.choices?.[0]?.text === 'string') {
+    return data.choices[0].text.trim();
+  }
+
+  if (typeof data?.output_text === 'string') {
+    return data.output_text.trim();
+  }
+
+  return '';
 }
