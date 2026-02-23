@@ -43,18 +43,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .join('\n');
 
     const callMatcher = async (strictPick: boolean) => {
-      return fetch('https://api.openai.com/v1/chat/completions', {
+      return fetch('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-5',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a precise response matcher for medical IVR calls.
+          model: 'gpt-5.2',
+          input: `You are a precise response matcher for medical IVR calls.
 Return ONLY a JSON object with this exact schema:
 {"match": <INTEGER option number, 1..N, or 0>, "confidence": <number 0.0-1.0>}
 
@@ -67,11 +64,9 @@ CRITICAL MATCHING RULES:
 6. AMBIGUITY - Return 0 only if none of the options are reasonably supported.
 7. Prefer selecting one option when there is a reasonable closest match.${strictPick ? '\n8. STRICT PICK MODE: choose the best-supported option unless truly impossible.' : ''}
 
-Be VERY careful - incorrect matches affect patient care.`,
-            },
-            {
-              role: 'user',
-                content: `Question: ${question || 'N/A'}
+Be VERY careful - incorrect matches affect patient care.
+
+Question: ${question || 'N/A'}
 
 Patient said: "${userResponse}"
 
@@ -82,10 +77,7 @@ Options:
 ${optionsStr}
 
 Use full conversation context to disambiguate intent, but prioritize what the patient most recently said for this question.`,
-            },
-          ],
-          max_completion_tokens: 50,
-          response_format: { type: 'json_object' },
+          reasoning: { effort: 'low' },
         }),
       });
     };
@@ -108,9 +100,9 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
     }
 
     const data = await response.json();
-    const content = extractAssistantContent(data);
+    const content = extractResponsesContent(data);
     console.log('[debug-match-api] first pass extracted content:', content);
-    console.log('[debug-match-api] first pass raw choice message:', data?.choices?.[0]?.message);
+    console.log('[debug-match-api] first pass raw output:', data?.output);
 
     if (!content) {
       return res.status(200).json({
@@ -118,7 +110,7 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
         matchedIndex: -1,
         debug: {
           stage: 'empty_content_first_pass',
-          rawChoiceMessage: data?.choices?.[0]?.message ?? null,
+          rawOutput: data?.output ?? null,
         },
       });
     }
@@ -146,9 +138,9 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
       const retry = await callMatcher(true);
       if (retry.ok) {
         const retryData = await retry.json();
-        const retryContent = extractAssistantContent(retryData);
+        const retryContent = extractResponsesContent(retryData);
         console.log('[debug-match-api] retry extracted content:', retryContent);
-        console.log('[debug-match-api] retry raw choice message:', retryData?.choices?.[0]?.message);
+        console.log('[debug-match-api] retry raw output:', retryData?.output);
         if (retryContent) {
           try {
             const retryParsed = JSON.parse(retryContent);
@@ -235,33 +227,20 @@ function extractMatchIndex(rawMatch: unknown, options: Array<{ label: string }>)
   return 0;
 }
 
-function extractAssistantContent(data: any): string {
-  const message = data?.choices?.[0]?.message;
-  const content = message?.content;
-
-  if (typeof content === 'string') {
-    return content.trim();
-  }
-
-  if (Array.isArray(content)) {
-    const parts = content
-      .map((part: any) => {
-        if (typeof part === 'string') return part;
-        if (part && typeof part.text === 'string') return part.text;
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n')
-      .trim();
-    if (parts) return parts;
-  }
-
-  if (typeof data?.choices?.[0]?.text === 'string') {
-    return data.choices[0].text.trim();
-  }
-
-  if (typeof data?.output_text === 'string') {
+function extractResponsesContent(data: any): string {
+  if (typeof data?.output_text === 'string' && data.output_text.trim()) {
     return data.output_text.trim();
+  }
+
+  if (!Array.isArray(data?.output)) return '';
+
+  for (const item of data.output) {
+    if (item?.type !== 'message' || !Array.isArray(item?.content)) continue;
+    for (const part of item.content) {
+      if (typeof part?.text === 'string' && part.text.trim()) {
+        return part.text.trim();
+      }
+    }
   }
 
   return '';
