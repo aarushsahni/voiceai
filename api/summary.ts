@@ -40,6 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const transcript = transcriptLines.join('\n');
+    const transcriptLower = transcript.toLowerCase();
 
     // Create a simple local summary as fallback
     const makeLocalSummary = () => {
@@ -135,6 +136,11 @@ CRITICAL RULES:
     // Parse JSON response
     try {
       const parsed = JSON.parse(content);
+      const { callbackActions, reminderActions } = normalizeActions(
+        parsed.callbackActions || [],
+        parsed.reminderActions || [],
+        transcriptLower
+      );
       return res.status(200).json({ 
         summary: {
           outcome: parsed.outcome || 'completed',
@@ -142,8 +148,8 @@ CRITICAL RULES:
           patientResponses: parsed.patientResponses || [],
           keyFindings: parsed.keyFindings || '',
           language: parsed.language || 'Unknown',
-          callbackActions: parsed.callbackActions || [],
-          reminderActions: parsed.reminderActions || [],
+          callbackActions,
+          reminderActions,
         }
       });
     } catch {
@@ -174,4 +180,60 @@ CRITICAL RULES:
       }
     });
   }
+}
+
+function normalizeActions(
+  callbackRaw: string[],
+  reminderRaw: string[],
+  transcriptLower: string
+): { callbackActions: string[]; reminderActions: string[] } {
+  const callbackMarkers = ['call back', 'callback', 'call the patient', 'team will call', 'someone will call'];
+  const reminderMarkers = ['reminder', 'mail', 'lab slip', 'records', 'follow up', 'follow-up'];
+
+  const clean = (arr: string[]) =>
+    arr
+      .filter((a) => typeof a === 'string')
+      .map((a) => a.trim())
+      .filter((a) => a.length > 0);
+
+  const unique = (arr: string[]) => Array.from(new Set(arr));
+
+  const hasEvidence = (action: string): boolean => {
+    const lower = action.toLowerCase();
+    const keywords = lower
+      .split(/[^a-z0-9]+/g)
+      .filter((w) => w.length >= 4)
+      .filter((w) => !['patient', 'action', 'scheduled', 'message', 'someone', 'team'].includes(w));
+    if (keywords.length === 0) return true;
+    return keywords.some((kw) => transcriptLower.includes(kw));
+  };
+
+  let callbackActions = clean(callbackRaw);
+  let reminderActions = clean(reminderRaw);
+
+  // If model accidentally puts callback actions into reminders, move them.
+  const movedToCallback: string[] = [];
+  reminderActions = reminderActions.filter((action) => {
+    const lower = action.toLowerCase();
+    const isCallback = callbackMarkers.some((m) => lower.includes(m));
+    if (isCallback) movedToCallback.push(action);
+    return !isCallback;
+  });
+  callbackActions.push(...movedToCallback);
+
+  // If model accidentally puts pure reminder actions into callbacks, move them.
+  const movedToReminder: string[] = [];
+  callbackActions = callbackActions.filter((action) => {
+    const lower = action.toLowerCase();
+    const isCallback = callbackMarkers.some((m) => lower.includes(m));
+    const isReminder = reminderMarkers.some((m) => lower.includes(m));
+    if (!isCallback && isReminder) movedToReminder.push(action);
+    return isCallback || !isReminder;
+  });
+  reminderActions.push(...movedToReminder);
+
+  callbackActions = unique(callbackActions).filter(hasEvidence);
+  reminderActions = unique(reminderActions).filter(hasEvidence);
+
+  return { callbackActions, reminderActions };
 }

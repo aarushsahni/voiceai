@@ -10,7 +10,7 @@ import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
 import { CallbackAlert } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, InputType } from './components/ScriptConfig';
-import { defaultFlowMap, inferFlowStep, matchUserResponse, getSystemPrompt } from './utils/scripts';
+import { defaultFlowMap, inferFlowStep, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
 
 function App() {
@@ -105,7 +105,8 @@ function App() {
     question: string,
     userResponse: string,
     stepId: string,
-    flowMap: FlowMapType
+    flowMap: FlowMapType,
+    transcriptSoFar: string
   ) => {
     const step = flowMap.steps.find(s => s.id === stepId);
     if (!step || !step.options.length) {
@@ -127,6 +128,7 @@ function App() {
           question,
           userResponse,
           options: step.options,
+          transcriptSoFar,
         }),
       });
 
@@ -140,12 +142,6 @@ function App() {
           matchedLabel = step.options[data.matchedIndex].label;
         } else if (data.match) {
           matchedLabel = data.match;
-        } else {
-          // Fallback: local matcher for robustness if API format drifts or LLM returns no match.
-          matchedLabel = matchUserResponse(userResponse, stepId, flowMap);
-          if (matchedLabel) {
-            console.log(`[match] Fallback local match hit for step "${stepId}": "${matchedLabel}"`);
-          }
         }
 
         if (matchedLabel) {
@@ -291,7 +287,11 @@ function App() {
           const step = activeFlowMap.steps.find(s => s.id === stepId);
           if (step) {
             console.log(`[match] Matching against step "${stepId}" with ${step.options.length} options: ${step.options.map(o => o.label).join(', ')}`);
-            matchAnswerWithLLM(step.question, entry.text, stepId, activeFlowMap);
+            const transcriptSoFar = updated
+              .filter(t => t.role === 'assistant' || t.role === 'user')
+              .map(t => `${t.role === 'assistant' ? 'Assistant' : 'User'}: ${t.text}`)
+              .join('\n');
+            matchAnswerWithLLM(step.question, entry.text, stepId, activeFlowMap, transcriptSoFar);
           } else {
             console.log(`[match] WARNING: Step "${stepId}" not found in flow map`);
           }

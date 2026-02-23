@@ -15,13 +15,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { question, userResponse, options } = req.body || {};
+    const { question, userResponse, options, transcriptSoFar } = req.body || {};
 
     if (!userResponse || !options || !Array.isArray(options)) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Build options string for the prompt
+    // Build options string for the prompt (exact labels only)
     const optionsStr = options
       .map((opt: { label: string }, i: number) => `${i + 1}. ${opt.label}`)
       .join('\n');
@@ -46,7 +46,8 @@ CRITICAL MATCHING RULES:
 3. NEGATIONS - Pay close attention to negative words which reverse meaning.
 4. COMPLETE MEANING - Match the full meaning and intent, not just isolated keywords.
 5. NUMERIC VALUES - If an option contains a number and the patient said that number, match it.
-6. AMBIGUITY - If truly ambiguous, return 0.
+6. USE OPTION KEYWORDS - Keywords are hints for each option; use them with the option label.
+7. AMBIGUITY - If truly ambiguous, return 0.
 
 Be VERY careful - incorrect matches affect patient care.`,
           },
@@ -56,10 +57,13 @@ Be VERY careful - incorrect matches affect patient care.`,
 
 Patient said: "${userResponse}"
 
+Transcript so far:
+${transcriptSoFar || '(none)'}
+
 Options:
 ${optionsStr}
 
-This is a voice transcript that may contain phonetic transcription errors. Consider both the literal words and what the patient likely intended to say. Match to the most appropriate option.`,
+This is a voice transcript that may contain phonetic transcription errors. Use the full conversation context to disambiguate intent, but prioritize what the patient most recently said for this question. Match to the most appropriate option.`,
           },
         ],
         temperature: 0.1,
@@ -82,9 +86,13 @@ This is a voice transcript that may contain phonetic transcription errors. Consi
     }
 
     const parsed = JSON.parse(content);
-    const matchIdx = Number(parsed.match) || 0;
-    
-    console.log(`[match] User: "${userResponse}" → LLM returned: ${JSON.stringify(parsed)}, matchIdx: ${matchIdx}`);
+    const llmMatchIdx = Number(parsed.match) || 0;
+    const llmConfidence = Number(parsed.confidence) || 0;
+    const matchIdx = llmMatchIdx;
+
+    console.log(
+      `[match] User: "${userResponse}" → LLM: ${JSON.stringify(parsed)}, finalMatchIdx: ${matchIdx}, source: llm`
+    );
 
     if (matchIdx > 0 && matchIdx <= options.length) {
       const matchedOption = options[matchIdx - 1];
@@ -92,7 +100,7 @@ This is a voice transcript that may contain phonetic transcription errors. Consi
       return res.status(200).json({
         match: matchedOption.label,
         matchedIndex: matchIdx - 1,
-        confidence: parsed.confidence || 0,
+        confidence: llmConfidence,
       });
     }
 
