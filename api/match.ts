@@ -16,6 +16,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const { question, userResponse, options, transcriptSoFar } = req.body || {};
+    console.log('[debug-match-api] request received:', {
+      questionLength: (question || '').length,
+      userResponse,
+      optionsCount: Array.isArray(options) ? options.length : 0,
+      options: Array.isArray(options) ? options.map((o: any, idx: number) => ({ idx, label: o?.label, next: o?.next })) : [],
+      transcriptSoFarLength: (transcriptSoFar || '').length,
+    });
 
     if (!userResponse || !options || !Array.isArray(options)) {
       return res.status(400).json({ error: 'Missing required fields' });
@@ -85,6 +92,7 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
+    console.log('[debug-match-api] first pass raw content:', content);
 
     if (!content) {
       return res.status(200).json({ match: null, matchedIndex: -1 });
@@ -93,6 +101,7 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
     const parsed = JSON.parse(content);
     let llmMatchIdx = extractMatchIndex(parsed.match, options);
     let llmConfidence = Number(parsed.confidence) || 0;
+    console.log('[debug-match-api] first pass parsed:', { parsed, llmMatchIdx, llmConfidence });
 
     // LLM-only retry: if first pass returns 0, ask for best-supported pick unless truly impossible.
     if (llmMatchIdx === 0) {
@@ -100,6 +109,7 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
       if (retry.ok) {
         const retryData = await retry.json();
         const retryContent = retryData.choices?.[0]?.message?.content;
+        console.log('[debug-match-api] retry raw content:', retryContent);
         if (retryContent) {
           try {
             const retryParsed = JSON.parse(retryContent);
@@ -135,6 +145,7 @@ Use full conversation context to disambiguate intent, but prioritize what the pa
     }
 
     console.log(`[match] ❌ No valid match (idx=${matchIdx}, options count=${options.length})`);
+    console.log('[debug-match-api] returning null match for request:', { userResponse, options: options.map((o: any) => o.label) });
     return res.status(200).json({ match: null, matchedIndex: -1 });
   } catch (error) {
     console.error('Match error:', error);

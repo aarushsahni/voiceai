@@ -121,6 +121,13 @@ function App() {
     }
 
     try {
+      console.log('[debug-match] sending /api/match payload:', {
+        stepId,
+        question,
+        userResponse,
+        options: step.options.map((o, idx) => ({ idx, label: o.label, next: o.next })),
+        transcriptSoFarLength: transcriptSoFar?.length || 0,
+      });
       const response = await fetch('/api/match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -134,6 +141,7 @@ function App() {
 
       if (response.ok) {
         const data = await response.json();
+        console.log('[debug-match] /api/match response JSON:', JSON.stringify(data));
         console.log(`[match] Result for step "${stepId}":`, data.match, `(confidence: ${data.confidence})`);
 
         // Prefer matchedIndex because it's unambiguous and tied to the current option list.
@@ -148,6 +156,13 @@ function App() {
           const matchedOption = step.options.find(
             (opt) => opt.label.toLowerCase() === matchedLabel.toLowerCase()
           );
+          if (!matchedOption) {
+            console.log('[debug-match] matchedLabel did not equal any option label exactly:', {
+              stepId,
+              matchedLabel,
+              optionLabels: step.options.map(o => o.label),
+            });
+          }
           if (matchedOption?.triggers_callback) {
             setNeedsCallback(true);
             setCallbackReasons(prevReasons => {
@@ -159,7 +174,9 @@ function App() {
             const current = prev.get(stepId);
             if (current === matchedLabel) return prev;
             console.log(`[match] ✅ Setting green highlight: step "${stepId}" → option "${matchedLabel}"`);
-            return new Map([...prev, [stepId, matchedLabel]]);
+            const next = new Map([...prev, [stepId, matchedLabel]]);
+            console.log('[debug-match] matchedOptions map after set:', Array.from(next.entries()));
+            return next;
           });
         } else {
           console.log(`[match] ❌ No match found for step "${stepId}", user said: "${userResponse}"`);
@@ -287,6 +304,12 @@ function App() {
           const step = activeFlowMap.steps.find(s => s.id === stepId);
           if (step) {
             console.log(`[match] Matching against step "${stepId}" with ${step.options.length} options: ${step.options.map(o => o.label).join(', ')}`);
+            console.log('[debug-match] current active step detail:', {
+              id: step.id,
+              label: step.label,
+              question: step.question,
+              options: step.options.map((o, idx) => ({ idx, label: o.label, next: o.next })),
+            });
             const transcriptSoFar = updated
               .filter(t => t.role === 'assistant' || t.role === 'user')
               .map(t => `${t.role === 'assistant' ? 'Assistant' : 'User'}: ${t.text}`)
