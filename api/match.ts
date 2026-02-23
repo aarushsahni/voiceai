@@ -26,19 +26,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map((opt: { label: string }, i: number) => `${i + 1}. ${opt.label}`)
       .join('\n');
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-5',
-        messages: [
-          {
-            role: 'system',
-            content: `You are a precise response matcher for medical IVR calls.
-Return ONLY a JSON object with: {"match": <option_number or 0 if no match>, "confidence": <0.0-1.0>}
+    const callMatcher = async (strictPick: boolean) => {
+      return fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-5',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a precise response matcher for medical IVR calls.
+Return ONLY a JSON object with this exact schema:
+{"match": <INTEGER option number, 1..N, or 0>, "confidence": <number 0.0-1.0>}
 
 CRITICAL MATCHING RULES:
 1. VOICE TRANSCRIPTION ERRORS - This is voice transcription which may contain errors from phonetically similar words. Match based on both phonetic similarity (words that sound alike) and semantic meaning (intended meaning).
@@ -46,14 +48,14 @@ CRITICAL MATCHING RULES:
 3. NEGATIONS - Pay close attention to negative words which reverse meaning.
 4. COMPLETE MEANING - Match the full meaning and intent, not just isolated keywords.
 5. NUMERIC VALUES - If an option contains a number and the patient said that number, match it.
-6. USE OPTION KEYWORDS - Keywords are hints for each option; use them with the option label.
-7. AMBIGUITY - If truly ambiguous, return 0.
+6. AMBIGUITY - Return 0 only if none of the options are reasonably supported.
+7. Prefer selecting one option when there is a reasonable closest match.${strictPick ? '\n8. STRICT PICK MODE: choose the best-supported option unless truly impossible.' : ''}
 
 Be VERY careful - incorrect matches affect patient care.`,
-          },
-          {
-            role: 'user',
-            content: `Question: ${question || 'N/A'}
+            },
+            {
+              role: 'user',
+              content: `Question: ${question || 'N/A'}
 
 Patient said: "${userResponse}"
 
@@ -63,14 +65,17 @@ ${transcriptSoFar || '(none)'}
 Options:
 ${optionsStr}
 
-This is a voice transcript that may contain phonetic transcription errors. Use the full conversation context to disambiguate intent, but prioritize what the patient most recently said for this question. Match to the most appropriate option.`,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 50,
-        response_format: { type: 'json_object' },
-      }),
-    });
+Use full conversation context to disambiguate intent, but prioritize what the patient most recently said for this question.`,
+            },
+          ],
+          temperature: 0.1,
+          max_tokens: 50,
+          response_format: { type: 'json_object' },
+        }),
+      });
+    };
+
+    const response = await callMatcher(false);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -86,8 +91,33 @@ This is a voice transcript that may contain phonetic transcription errors. Use t
     }
 
     const parsed = JSON.parse(content);
-    const llmMatchIdx = Number(parsed.match) || 0;
-    const llmConfidence = Number(parsed.confidence) || 0;
+    let llmMatchIdx = extractMatchIndex(parsed.match, options);
+    let llmConfidence = Number(parsed.confidence) || 0;
+
+    // LLM-only retry: if first pass returns 0, ask for best-supported pick unless truly impossible.
+    if (llmMatchIdx === 0) {
+      const retry = await callMatcher(true);
+      if (retry.ok) {
+        const retryData = await retry.json();
+        const retryContent = retryData.choices?.[0]?.message?.content;
+        if (retryContent) {
+          try {
+            const retryParsed = JSON.parse(retryContent);
+            const retryIdx = extractMatchIndex(retryParsed.match, options);
+            const retryConfidence = Number(retryParsed.confidence) || 0;
+            console.log(`[match] retry raw: ${JSON.stringify(retryParsed)}, idx: ${retryIdx}, confidence: ${retryConfidence}`);
+            if (retryIdx > 0 && retryIdx <= options.length) {
+              llmMatchIdx = retryIdx;
+              llmConfidence = retryConfidence;
+              console.log(`[match] retry picked option ${retryIdx} (confidence ${retryConfidence})`);
+            }
+          } catch {
+            // keep original result
+          }
+        }
+      }
+    }
+
     const matchIdx = llmMatchIdx;
 
     console.log(
@@ -110,4 +140,25 @@ This is a voice transcript that may contain phonetic transcription errors. Use t
     console.error('Match error:', error);
     return res.status(200).json({ match: null, matchedIndex: -1 });
   }
+}
+
+function extractMatchIndex(rawMatch: unknown, options: Array<{ label: string }>): number {
+  if (typeof rawMatch === 'number' && Number.isFinite(rawMatch)) {
+    return Math.trunc(rawMatch);
+  }
+
+  if (typeof rawMatch === 'string') {
+    const trimmed = rawMatch.trim();
+    // "2", "2.", "option 2", "#2"
+    const numMatch = trimmed.match(/(\d+)/);
+    if (numMatch) {
+      return Number(numMatch[1]) || 0;
+    }
+
+    // If model returned the option label text instead of an index, map it.
+    const byLabel = options.findIndex((o) => o.label.toLowerCase() === trimmed.toLowerCase());
+    if (byLabel >= 0) return byLabel + 1;
+  }
+
+  return 0;
 }
