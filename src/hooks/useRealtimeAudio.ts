@@ -34,10 +34,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const audioMonitorIntervalRef = useRef<number | null>(null);
-  const onAudioSilenceCallbackRef = useRef<(() => void) | null>(null);
   
   // Timing tracking
   const speechStoppedTimeRef = useRef<number | null>(null);
@@ -59,7 +55,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Track if we're waiting for goodbye audio to finish (prevents dc.onclose from ending early)
   const waitingForGoodbyeRef = useRef<boolean>(false);
   
-  // Track last audio delta time to estimate when audio finishes
+  // Track last audio data chunk time — used to determine when playback finishes
+  const lastAudioChunkTimeRef = useRef<number>(0);
   const lastAudioDeltaTimeRef = useRef<number>(0);
   const transcriptLengthRef = useRef<number>(0);
   const eventCountRef = useRef<number>(0);
@@ -73,10 +70,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   
   const RESPONSE_DELAY_MS = 400;
   
-  // Silence detection thresholds (using RMS audio level)
-  const SILENCE_THRESHOLD = 0.03;
-  const SILENCE_DURATION_MS = 400;
-  const MAX_WAIT_FOR_SILENCE_MS = 15000;
+  // How long to wait after the last audio chunk for WebRTC buffer to drain
+  const BUFFER_DRAIN_MS = 800;
 
   // Keep refs to latest callbacks to avoid stale closures in WebRTC event handlers
   const onTranscriptRef = useRef(onTranscript);
@@ -105,104 +100,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     onTranscriptRef.current?.(entry);
   }, []);
 
-  const waitForAudioSilence = useCallback((onSilence: () => void, fallbackDelayMs: number, minWaitMs: number = 0, silenceDurationOverride?: number) => {
-    if (audioMonitorIntervalRef.current) {
-      clearInterval(audioMonitorIntervalRef.current);
-      audioMonitorIntervalRef.current = null;
-    }
-    
-    const analyser = analyserRef.current;
-    if (!analyser) {
-      console.log(`[audio] No analyser, using fallback delay: ${fallbackDelayMs}ms`);
-      setTimeout(onSilence, fallbackDelayMs);
-      return;
-    }
-    
-    const bufferLength = analyser.fftSize;
-    const dataArray = new Uint8Array(bufferLength);
-    let silenceStartTime: number | null = null;
-    const startTime = Date.now();
-    let hasSeenAudio = false;
-    
-    onAudioSilenceCallbackRef.current = onSilence;
-    
-    const requiredSilenceMs = silenceDurationOverride ?? SILENCE_DURATION_MS;
-
-    audioMonitorIntervalRef.current = window.setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      if (elapsed < minWaitMs) return;
-
-      analyser.getByteTimeDomainData(dataArray);
-      
-      let sumSquares = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        const normalized = (dataArray[i] - 128) / 128;
-        sumSquares += normalized * normalized;
-      }
-      const rms = Math.sqrt(sumSquares / bufferLength);
-      
-      const isSilent = rms < SILENCE_THRESHOLD;
-      
-      if (!isSilent) {
-        hasSeenAudio = true;
-        silenceStartTime = null;
-      } else if (hasSeenAudio) {
-        if (!silenceStartTime) {
-          silenceStartTime = Date.now();
-          console.log(`[audio] Silence started (RMS: ${rms.toFixed(4)})`);
-        } else if (Date.now() - silenceStartTime >= requiredSilenceMs) {
-          console.log(`[audio] Silence confirmed after ${Date.now() - startTime}ms total`);
-          if (audioMonitorIntervalRef.current) {
-            clearInterval(audioMonitorIntervalRef.current);
-            audioMonitorIntervalRef.current = null;
-          }
-          onAudioSilenceCallbackRef.current = null;
-          onSilence();
-          return;
-        }
-      }
-      
-      if (!hasSeenAudio && Date.now() - startTime >= 2000) {
-        console.log('[audio] No audio detected after 2s, assuming playback finished');
-        if (audioMonitorIntervalRef.current) {
-          clearInterval(audioMonitorIntervalRef.current);
-          audioMonitorIntervalRef.current = null;
-        }
-        onAudioSilenceCallbackRef.current = null;
-        onSilence();
-        return;
-      }
-
-      if (Date.now() - startTime >= MAX_WAIT_FOR_SILENCE_MS) {
-        console.log('[audio] Max wait time reached, proceeding anyway');
-        if (audioMonitorIntervalRef.current) {
-          clearInterval(audioMonitorIntervalRef.current);
-          audioMonitorIntervalRef.current = null;
-        }
-        onAudioSilenceCallbackRef.current = null;
-        onSilence();
-      }
-    }, 30);
-  }, []);
-
   const endCall = useCallback(() => {
     if (endingCallRef.current) {
       console.log('[endCall] Already ending, skipping duplicate');
       return;
     }
     endingCallRef.current = true;
-
-    if (audioMonitorIntervalRef.current) {
-      clearInterval(audioMonitorIntervalRef.current);
-      audioMonitorIntervalRef.current = null;
-    }
-    onAudioSilenceCallbackRef.current = null;
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-      analyserRef.current = null;
-    }
 
     if (dataChannelRef.current) {
       dataChannelRef.current.close();
@@ -323,22 +226,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         audioEl.play().catch(err => {
           console.log('[audio] Autoplay blocked, user interaction required:', err);
         });
-        
-        try {
-          const audioContext = new AudioContext();
-          audioContextRef.current = audioContext;
-          
-          const source = audioContext.createMediaStreamSource(stream);
-          const analyser = audioContext.createAnalyser();
-          analyser.fftSize = 256;
-          analyser.smoothingTimeConstant = 0.3;
-          source.connect(analyser);
-          analyserRef.current = analyser;
-          
-          console.log('[audio] Web Audio API analyser connected for silence detection');
-        } catch (err) {
-          console.log('[audio] Could not set up audio analyser:', err);
-        }
       };
 
       // 4. Get user's microphone
@@ -580,6 +467,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         console.log('[mic] Muted - response starting');
         break;
 
+      // Track actual audio data chunks for precise playback-end timing
+      case 'response.output_audio.delta':
+      case 'response.audio.delta':
+        lastAudioChunkTimeRef.current = Date.now();
+        break;
+
       // GA event names (primary)
       case 'response.output_audio_transcript.delta':
       // Beta fallback
@@ -706,13 +599,15 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             endCall();
           }, playbackEstimateMs);
         } else {
-          const fallbackMs = Math.min(12000, Math.max(2000, transcriptLen * 80));
-          waitForAudioSilence(() => {
+          const timeSinceLastChunk = Date.now() - lastAudioChunkTimeRef.current;
+          const remainingMs = Math.max(200, BUFFER_DRAIN_MS - timeSinceLastChunk);
+          console.log(`[audio] Waiting ${remainingMs}ms for buffer drain (last chunk ${timeSinceLastChunk}ms ago)`);
+          setTimeout(() => {
             if (endingCallRef.current) return;
             assistantSpeakingRef.current = false;
             updateMicMute?.();
             updateStatus('listening');
-          }, fallbackMs);
+          }, remainingMs);
         }
         break;
       }
@@ -737,7 +632,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         break;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateStatus, addTranscript, endCall, waitForAudioSilence]);
+  }, [updateStatus, addTranscript, endCall]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -745,12 +640,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       if (initialGreetingWatchdogRef.current) {
         clearTimeout(initialGreetingWatchdogRef.current);
       }
-      if (audioMonitorIntervalRef.current) {
-        clearInterval(audioMonitorIntervalRef.current);
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-      }
+      
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }
