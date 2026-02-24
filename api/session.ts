@@ -75,8 +75,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 model: 'gpt-4o-mini-transcribe',
               },
               turn_detection: {
-                type: 'semantic_vad',
-                eagerness: 'medium',
+                type: 'server_vad',
+                silence_duration_ms: 400,
+                prefix_padding_ms: 200,
+                threshold: 0.6,
                 create_response: false,
               },
             },
@@ -125,7 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 function getDefaultSystemPrompt(): string {
   return `
-Penn Medicine LGH ED follow-up call. Be warm and conversational. Speak at a calm, unhurried pace with natural intonation — never sound rushed or robotic. Use soft verbal transitions and pause briefly between sentences.
+Penn Medicine LGH ED follow-up call. Be warm and conversational. Sound warm, friendly, and upbeat — like a cheerful nurse checking in. Speak with energy and a smile in your voice. Use expressive intonation and friendly transitions.
 
 START (say this first): "Hi [patient_name], this is Penn Medicine Lancaster General Health calling about your recent emergency room visit. To continue in English, please say 'English'. Para continuar en español, por favor diga 'Español'."
 
