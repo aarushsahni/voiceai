@@ -61,8 +61,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           noise_reduction: { type: 'near_field' },
           turn_detection: {
             type: 'semantic_vad',
-            eagerness: 'medium',
+            eagerness: 'low',
             create_response: true,
+            interrupt_response: false,
           },
         },
         output: {

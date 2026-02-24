@@ -74,7 +74,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const RESPONSE_DELAY_MS = 400;
   
   // Silence detection thresholds (using RMS audio level)
-  const SILENCE_THRESHOLD = 0.01;
+  const SILENCE_THRESHOLD = 0.03;
   const SILENCE_DURATION_MS = 400;
   const MAX_WAIT_FOR_SILENCE_MS = 15000;
 
@@ -356,6 +356,14 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           const shouldMute = assistantSpeakingRef.current;
           audioTrack.enabled = !shouldMute;
           console.log(`[mic] Track enabled: ${audioTrack.enabled} (assistant speaking: ${shouldMute})`);
+          
+          const channel = dataChannelRef.current;
+          if (channel && channel.readyState === 'open') {
+            try {
+              channel.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
+              console.log('[mic] Cleared server input audio buffer');
+            } catch (_) { /* ignore */ }
+          }
         }
       };
 
@@ -534,20 +542,25 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
         }
-        // If assistant is still speaking (audio still playing), keep mic muted
         if (assistantSpeakingRef.current) {
-          console.log('[mic] speech_started while assistant speaking — keeping muted');
+          console.log('[mic] speech_started while assistant speaking — ignoring & clearing buffer');
+          if (dataChannel && dataChannel.readyState === 'open') {
+            try {
+              dataChannel.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
+            } catch (_) { /* ignore */ }
+          }
           break;
         }
         updateStatus('user_speaking');
         break;
 
       case 'input_audio_buffer.speech_stopped':
-        speechStoppedTimeRef.current = Date.now();
-        // Only transition to processing if assistant isn't speaking (avoids echo triggers)
-        if (!assistantSpeakingRef.current) {
-          updateStatus('processing');
+        if (assistantSpeakingRef.current) {
+          console.log('[debug-call] speech_stopped while assistant speaking — ignoring');
+          break;
         }
+        speechStoppedTimeRef.current = Date.now();
+        updateStatus('processing');
         console.log('[debug-call] speech_stopped received (VAD auto-creates response)');
         break;
 
