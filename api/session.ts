@@ -86,7 +86,7 @@ After EVERY patient response to a question step, you MUST call the "report_patie
       type: 'realtime',
       model: 'gpt-4o-realtime-preview-2024-12-17',
       instructions: instructions.trim(),
-      output_modalities: ['text', 'audio'],
+      output_modalities: ['audio'],
       audio: {
         input: {
           format: { type: 'audio/pcm', rate: 24000 },
