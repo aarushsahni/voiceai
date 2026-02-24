@@ -157,6 +157,17 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         }
       }
       
+      if (!hasSeenAudio && Date.now() - startTime >= 2000) {
+        console.log('[audio] No audio detected after 2s, assuming playback finished');
+        if (audioMonitorIntervalRef.current) {
+          clearInterval(audioMonitorIntervalRef.current);
+          audioMonitorIntervalRef.current = null;
+        }
+        onAudioSilenceCallbackRef.current = null;
+        onSilence();
+        return;
+      }
+
       if (Date.now() - startTime >= MAX_WAIT_FOR_SILENCE_MS) {
         console.log('[audio] Max wait time reached, proceeding anyway');
         if (audioMonitorIntervalRef.current) {
@@ -671,21 +682,19 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         
         if (goodbyeDetectedRef.current) {
           waitingForGoodbyeRef.current = true;
-          const playbackEstimateMs = Math.min(10000, Math.max(5000, transcriptLen * 80));
-          
-          setTimeout(() => {
+          const fallbackMs = Math.min(15000, Math.max(5000, transcriptLen * 80));
+          waitForAudioSilence(() => {
             if (endingCallRef.current) return;
             endCall();
-          }, playbackEstimateMs);
+          }, fallbackMs);
         } else {
-          const playbackEstimateMs = Math.min(6000, Math.max(1000, transcriptLen * 55));
-          
-          setTimeout(() => {
+          const fallbackMs = Math.min(12000, Math.max(2000, transcriptLen * 80));
+          waitForAudioSilence(() => {
             if (endingCallRef.current) return;
             assistantSpeakingRef.current = false;
             updateMicMute?.();
             updateStatus('listening');
-          }, playbackEstimateMs);
+          }, fallbackMs);
         }
         break;
       }

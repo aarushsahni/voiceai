@@ -60,10 +60,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           transcription: { model: 'whisper-1' },
           noise_reduction: { type: 'near_field' },
           turn_detection: {
-            type: 'server_vad',
-            silence_duration_ms: 600,
-            prefix_padding_ms: 300,
-            threshold: 0.5,
+            type: 'semantic_vad',
+            eagerness: 'medium',
             create_response: true,
           },
         },
