@@ -36,7 +36,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (transcriptLines.length === 0) {
-      return res.status(200).json({ summary: 'No conversation content to summarize.' });
+      return res.status(200).json({ summary: {
+        outcome: 'no_answer',
+        callbackNeeded: false,
+        patientResponses: [],
+        keyFindings: 'No conversation recorded.',
+        language: 'Unknown',
+        callbackActions: [],
+        reminderActions: [],
+      }});
     }
 
     const transcript = transcriptLines.join('\n');
@@ -52,10 +60,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return `Call completed with ${numTurns} patient responses. Patient statements: ${preview}${patientSaid.length > 3 ? '...' : ''}`;
     };
 
-    // Build context about callback status
-    const callbackContext = needsCallback 
-      ? `\n\nIMPORTANT: This call has been flagged for clinical callback. Reasons: ${(callbackReasons || []).join(', ')}`
-      : '\n\nNo callback required - patient reported no concerns.';
+    // Build context about callback status — only state facts, never assume patient intent
+    let callbackContext = '';
+    if (needsCallback) {
+      callbackContext = `\n\nThis call has been flagged for clinical callback. Reasons: ${(callbackReasons || []).join(', ')}`;
+    }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
