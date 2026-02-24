@@ -609,11 +609,9 @@ function App() {
             currentStepId={currentStepId}
             completedSteps={completedSteps}
             matchedOptions={matchedOptions}
-            editable={scriptSettings.scriptChoice === 'custom' && status === 'idle'}
+            editable={status === 'idle'}
             onFlowMapChange={(newFlowMap) => {
-              if (scriptSettings.scriptChoice === 'custom') {
-                setCustomFlowMap(newFlowMap);
-              }
+              setCustomFlowMap(newFlowMap);
             }}
           />
 
