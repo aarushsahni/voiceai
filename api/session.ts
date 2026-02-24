@@ -94,10 +94,10 @@ After EVERY patient response to a question step, you MUST call the "report_patie
           noise_reduction: { type: 'near_field' },
           turn_detection: {
             type: 'server_vad',
-            silence_duration_ms: 400,
-            prefix_padding_ms: 200,
-            threshold: 0.6,
-            create_response: false,
+            silence_duration_ms: 600,
+            prefix_padding_ms: 300,
+            threshold: 0.5,
+            create_response: true,
           },
         },
         output: {

@@ -80,6 +80,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
   // Accumulate function call arguments across delta events
   const pendingFunctionCallRef = useRef<{ callId: string; name: string; args: string } | null>(null);
+
+  // Track whether the API currently has an active response (response.created → response.done)
+  const responseActiveRef = useRef<boolean>(false);
   
   const RESPONSE_DELAY_MS = 400;
   
@@ -539,41 +542,26 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
         }
+        // If assistant is still speaking (audio still playing), keep mic muted
+        if (assistantSpeakingRef.current) {
+          console.log('[mic] speech_started while assistant speaking — keeping muted');
+          break;
+        }
         updateStatus('user_speaking');
         break;
 
       case 'input_audio_buffer.speech_stopped':
         speechStoppedTimeRef.current = Date.now();
-        updateStatus('processing');
-        console.log('[debug-call] speech_stopped received; scheduling response.create', {
-          delayMs: RESPONSE_DELAY_MS,
-          dcState: dataChannel?.readyState,
-        });
-        
-        if (responseDelayTimerRef.current) {
-          clearTimeout(responseDelayTimerRef.current);
+        // Only transition to processing if assistant isn't speaking (avoids echo triggers)
+        if (!assistantSpeakingRef.current) {
+          updateStatus('processing');
         }
-        responseDelayTimerRef.current = window.setTimeout(() => {
-          if (dataChannel && dataChannel.readyState === 'open') {
-            try {
-              console.log('[debug-call] sending delayed response.create after speech_stopped');
-              dataChannel.send(JSON.stringify({
-                type: 'response.create',
-              }));
-            } catch (sendErr) {
-              console.error('[debug-call] failed to send delayed response.create:', sendErr);
-            }
-          } else {
-            console.log('[debug-call] skipped delayed response.create; data channel not open', {
-              dcState: dataChannel?.readyState,
-            });
-          }
-          responseDelayTimerRef.current = null;
-        }, RESPONSE_DELAY_MS);
+        console.log('[debug-call] speech_stopped received (VAD auto-creates response)');
         break;
 
       case 'response.created':
         currentAssistantTextRef.current = '';
+        responseActiveRef.current = true;
         if (responseDelayTimerRef.current) {
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
@@ -686,10 +674,14 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
                 output: JSON.stringify({ status: 'recorded' }),
               },
             }));
-            // Trigger response continuation after tool output
-            dataChannel.send(JSON.stringify({
-              type: 'response.create',
-            }));
+            // Only trigger new response if no response is currently active
+            if (!responseActiveRef.current) {
+              dataChannel.send(JSON.stringify({
+                type: 'response.create',
+              }));
+            } else {
+              console.log('[tool-call] Skipping response.create — response already active');
+            }
           } catch (sendErr) {
             console.error('[tool-call] Failed to send function_call_output:', sendErr);
           }
@@ -699,6 +691,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       case 'response.done': {
         inResponseRef.current = false;
+        responseActiveRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
         const responseObj = data.response as any;
