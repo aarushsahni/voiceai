@@ -106,7 +106,6 @@ After EVERY patient response to a question step, you MUST call the "report_patie
         },
       },
       max_output_tokens: 1024,
-      temperature: 0.6,
     };
 
     if (tools.length > 0) {
@@ -126,9 +125,12 @@ After EVERY patient response to a question step, you MUST call the "report_patie
     if (!response.ok) {
       const errorText = await response.text();
       console.error('OpenAI session error:', errorText);
+      let parsedError: any = null;
+      try { parsedError = JSON.parse(errorText); } catch { /* raw text */ }
       return res.status(response.status).json({ 
         error: `Failed to create session: ${response.statusText}`,
-        details: errorText 
+        details: errorText,
+        openaiError: parsedError?.error || parsedError || errorText,
       });
     }
 

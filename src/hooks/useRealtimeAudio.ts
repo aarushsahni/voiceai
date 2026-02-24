@@ -279,7 +279,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       if (!sessionResponse.ok) {
         const error = await sessionResponse.json();
-        console.log('[debug-call] /api/session error payload:', error);
+        console.log('[debug-call] /api/session error payload:', JSON.stringify(error));
+        console.log('[debug-call] OpenAI error details:', error.openaiError || error.details || 'none');
         throw new Error(error.error || 'Failed to create session');
       }
 
