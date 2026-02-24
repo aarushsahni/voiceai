@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { Stethoscope, AlertCircle } from 'lucide-react';
-import { useRealtimeAudio } from './hooks/useRealtimeAudio';
+import { useRealtimeAudio, ToolCallArgs } from './hooks/useRealtimeAudio';
 import { TranscriptEntry, CallStatus, FlowMap as FlowMapType, CallSummaryData } from './types';
 import { CallControls } from './components/CallControls';
 import { StatusIndicator } from './components/StatusIndicator';
@@ -12,6 +12,8 @@ import { CallbackAlert } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, InputType } from './components/ScriptConfig';
 import { defaultFlowMap, inferFlowStep, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
+
+export type MatchingMethod = 'api' | 'tool';
 
 function App() {
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
@@ -48,6 +50,9 @@ function App() {
   // Reminder tracking - flags when a reminder/follow-up was promised
   const [needsReminder, setNeedsReminder] = useState(false);
   const [reminderReasons, setReminderReasons] = useState<string[]>([]);
+  // Matching method toggle: 'api' = separate LLM call, 'tool' = realtime function calling
+  const [matchingMethod, setMatchingMethod] = useState<MatchingMethod>('tool');
+
   // Monotonic call run id to prevent stale async updates between calls
   const callRunIdRef = useRef(0);
 
@@ -296,11 +301,11 @@ function App() {
           currentStepIdRef.current = newStep; // Update ref immediately
         }
       } else if (entry.role === 'user') {
-        // Use ref for latest step ID (handles rapid updates)
         const stepId = currentStepIdRef.current;
         console.log(`[match] User said: "${entry.text}", current step: "${stepId}"`);
-        if (stepId) {
-          // Use LLM matching for better accuracy (async, won't block conversation)
+
+        // Only use /api/match when matching method is 'api' (tool calling handles it inline)
+        if (matchingMethod === 'api' && stepId) {
           const step = activeFlowMap.steps.find(s => s.id === stepId);
           if (step) {
             console.log(`[match] Matching against step "${stepId}" with ${step.options.length} options: ${step.options.map(o => o.label).join(', ')}`);
@@ -318,14 +323,14 @@ function App() {
           } else {
             console.log(`[match] WARNING: Step "${stepId}" not found in flow map`);
           }
-        } else {
-          console.log(`[match] WARNING: No current step set when user spoke`);
+        } else if (matchingMethod === 'tool') {
+          console.log('[match] Using tool calling — skipping /api/match');
         }
       }
 
       return updated;
     });
-  }, [activeFlowMap, matchAnswerWithLLM]);
+  }, [activeFlowMap, matchAnswerWithLLM, matchingMethod]);
 
   // Handle status changes
   const handleStatusChange = useCallback((newStatus: CallStatus) => {
@@ -357,10 +362,57 @@ function App() {
     setError(errorMsg);
   }, []);
 
+  // Handle tool calls from realtime model (function calling matching)
+  const handleToolCall = useCallback((toolCall: ToolCallArgs) => {
+    if (toolCall.name === 'report_patient_selection') {
+      const { step_id, selected_option } = toolCall.arguments as { step_id?: string; selected_option?: string };
+      console.log(`[tool-match] Received tool call: step="${step_id}", option="${selected_option}"`);
+
+      if (!step_id || !selected_option || selected_option === 'none') {
+        console.log('[tool-match] Skipping — no valid step/option');
+        return;
+      }
+
+      // Find the step in the active flow map
+      const step = activeFlowMap.steps.find(s => s.id === step_id);
+      if (!step) {
+        console.log(`[tool-match] Step "${step_id}" not found in flow map`);
+        return;
+      }
+
+      // Find best matching option (case-insensitive)
+      const matchedOption = step.options.find(
+        (opt) => opt.label.toLowerCase() === selected_option.toLowerCase()
+      );
+
+      if (matchedOption) {
+        console.log(`[tool-match] ✅ Matched: step "${step_id}" → option "${matchedOption.label}"`);
+
+        if (matchedOption.triggers_callback) {
+          setNeedsCallback(true);
+          setCallbackReasons(prevReasons => {
+            const reason = `Patient selected callback option: ${matchedOption.label}`;
+            return prevReasons.includes(reason) ? prevReasons : [...prevReasons, reason];
+          });
+        }
+
+        setMatchedOptions(prev => {
+          const current = prev.get(step_id);
+          if (current === matchedOption.label) return prev;
+          console.log(`[tool-match] Setting green highlight: step "${step_id}" → option "${matchedOption.label}"`);
+          return new Map([...prev, [step_id, matchedOption.label]]);
+        });
+      } else {
+        console.log(`[tool-match] Option "${selected_option}" not found in step "${step_id}" options:`, step.options.map(o => o.label));
+      }
+    }
+  }, [activeFlowMap]);
+
   const { status, latency, startCall, endCall, isSupported } = useRealtimeAudio({
     onTranscript: handleTranscript,
     onStatusChange: handleStatusChange,
     onError: handleError,
+    onToolCall: handleToolCall,
   });
 
   // Generate/convert custom script - returns script content, greeting, and variables
@@ -503,9 +555,10 @@ function App() {
     startCall(
       systemPrompt, 
       scriptSettings.voice, 
-      scriptSettings.variableValues || {}
+      scriptSettings.variableValues || {},
+      matchingMethod === 'tool'
     );
-  }, [scriptSettings, getCallSystemPrompt, startCall]);
+  }, [scriptSettings, getCallSystemPrompt, startCall, matchingMethod]);
 
   // End current call
   const handleEndCall = useCallback(() => {
@@ -563,6 +616,40 @@ function App() {
             flowMap={customFlowMap}
             onLoadFlowMap={setCustomFlowMap}
           />
+        </div>
+
+        {/* Matching Method Toggle */}
+        <div className="mb-4 flex items-center gap-3 px-1">
+          <span className="text-sm font-medium text-slate-600">Answer Matching:</span>
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => setMatchingMethod('tool')}
+              disabled={isCallActive}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                matchingMethod === 'tool'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white text-slate-600 hover:bg-slate-50'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              Tool Calling (inline)
+            </button>
+            <button
+              onClick={() => setMatchingMethod('api')}
+              disabled={isCallActive}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-slate-200 ${
+                matchingMethod === 'api'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white text-slate-600 hover:bg-slate-50'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              LLM API (separate call)
+            </button>
+          </div>
+          <span className="text-xs text-slate-400">
+            {matchingMethod === 'tool'
+              ? 'Realtime model reports selections inline — faster, no extra API call'
+              : 'Separate LLM call to /api/match after each user response'}
+          </span>
         </div>
 
         {/* Call controls */}

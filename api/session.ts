@@ -1,8 +1,8 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 
 /**
- * Creates an ephemeral token for browser WebRTC connection to OpenAI Realtime API.
- * This keeps the API key server-side while allowing browser audio streaming.
+ * Creates an ephemeral token for browser WebRTC connection to OpenAI Realtime API (GA).
+ * Uses /v1/realtime/client_secrets with the GA session config shape.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -18,21 +18,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { 
       systemPrompt, 
       voice = 'cedar', 
-      variableValues = {}  // All variable values including patient_name
+      variableValues = {},
+      useToolMatching = false,
     } = req.body || {};
 
-    // Use provided system prompt or fall back to default
     let instructions = systemPrompt;
     
-    // If no custom prompt provided, use the default
     if (!instructions || instructions.trim().length === 0) {
       instructions = getDefaultSystemPrompt();
     }
     
     console.log('[session] Received prompt length:', instructions.length);
     console.log('[session] Variable values:', JSON.stringify(variableValues));
+    console.log('[session] useToolMatching:', useToolMatching);
     
-    // Replace ALL variable placeholders with their values (patient_name, street_address, etc.)
     for (const [varName, value] of Object.entries(variableValues)) {
       if (value && typeof value === 'string') {
         const regex = new RegExp(`\\[${varName}\\]`, 'gi');
@@ -44,47 +43,84 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
     
-    // Remove any remaining unfilled placeholders
     const remainingPlaceholders = instructions.match(/\[[a-z0-9_]+\]/gi);
     if (remainingPlaceholders) {
       console.log('[session] WARNING: Removing unfilled placeholders:', remainingPlaceholders);
     }
     instructions = instructions.replace(/\[[a-z0-9_]+\]/gi, '');
-    // Clean up artifacts from removed placeholders
     instructions = instructions.replace(/,\s*,/g, ',');
     instructions = instructions.replace(/\s{2,}/g, ' ');
 
-    const temperature = 0.6;
+    if (useToolMatching) {
+      instructions += `\n\nTOOL USAGE — report_patient_selection:
+After EVERY patient response to a question step, you MUST call the "report_patient_selection" tool to report which option the patient chose.
+- "step_id": the step ID from the BRANCHING RULES (e.g. "language", "confirm")
+- "selected_option": the EXACT label text of the matched option (e.g. "English", "Yes")
+- Call this tool BEFORE or WHILE speaking your next line — do NOT skip it.
+- If no option matches, still call the tool with selected_option set to "none".`;
+    }
 
-    // Create ephemeral token via OpenAI API
-    // Match voice5.py session.update configuration exactly
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    const tools: any[] = useToolMatching ? [
+      {
+        type: 'function',
+        name: 'report_patient_selection',
+        description: 'Report which option the patient selected after answering a question. Call this for every patient response to a question step.',
+        parameters: {
+          type: 'object',
+          properties: {
+            step_id: {
+              type: 'string',
+              description: 'The step ID from the branching rules (e.g. "language", "confirm", "general_status")',
+            },
+            selected_option: {
+              type: 'string',
+              description: 'The exact label text of the option the patient chose (e.g. "English", "Yes", "As expected"). Use "none" if no option matches.',
+            },
+          },
+          required: ['step_id', 'selected_option'],
+        },
+      },
+    ] : [];
+
+    const sessionConfig: Record<string, any> = {
+      type: 'realtime',
+      model: 'gpt-4o-realtime-preview-2024-12-17',
+      instructions: instructions.trim(),
+      output_modalities: ['text', 'audio'],
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: 24000 },
+          transcription: { model: 'whisper-1' },
+          noise_reduction: { type: 'near_field' },
+          turn_detection: {
+            type: 'server_vad',
+            silence_duration_ms: 400,
+            prefix_padding_ms: 200,
+            threshold: 0.6,
+            create_response: false,
+          },
+        },
+        output: {
+          voice: voice,
+          format: { type: 'audio/pcm', rate: 24000 },
+        },
+      },
+      max_output_tokens: 1024,
+      temperature: 0.6,
+    };
+
+    if (tools.length > 0) {
+      sessionConfig.tools = tools;
+      sessionConfig.tool_choice = 'auto';
+    }
+
+    const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'gpt-4o-realtime-preview-2024-12-17',
-        voice: voice,
-        instructions: instructions.trim(),  // voice5.py uses .strip()
-        modalities: ['text', 'audio'],  // voice5.py sets this
-        input_audio_format: 'pcm16',  // voice5.py sets this
-        output_audio_format: 'pcm16',  // voice5.py sets this
-        input_audio_transcription: {
-          model: 'whisper-1',  // voice5.py: TRANSCRIPTION_ENABLED = True
-        },
-        // VAD settings from voice5.py - exact values
-        turn_detection: {
-          type: 'server_vad',
-          silence_duration_ms: 400,    // voice5.py: VAD_SILENCE_DURATION_MS = 400
-          prefix_padding_ms: 200,      // voice5.py: VAD_PREFIX_PADDING_MS = 200
-          threshold: 0.6,              // voice5.py: VAD_THRESHOLD = 0.6
-          create_response: false,      // voice5.py: create_response: False
-        },
-        max_response_output_tokens: 1024,  // voice5.py sets this
-        temperature: temperature,  // voice5.py: self.temperature (0.6 or 0.9)
-      }),
+      body: JSON.stringify({ session: sessionConfig }),
     });
 
     if (!response.ok) {
@@ -97,10 +133,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const data = await response.json();
+    console.log('[session] GA response keys:', Object.keys(data));
+    
+    const clientSecret = data.client_secret || data;
     
     return res.status(200).json({
-      client_secret: data.client_secret,
-      expires_at: data.expires_at,
+      client_secret: clientSecret,
+      expires_at: clientSecret.expires_at || data.expires_at,
     });
   } catch (error) {
     console.error('Session creation error:', error);
