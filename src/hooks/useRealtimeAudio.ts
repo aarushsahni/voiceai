@@ -34,6 +34,10 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioMonitorIntervalRef = useRef<number | null>(null);
+  const onAudioSilenceCallbackRef = useRef<(() => void) | null>(null);
   
   // Timing tracking
   const speechStoppedTimeRef = useRef<number | null>(null);
@@ -55,8 +59,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Track if we're waiting for goodbye audio to finish (prevents dc.onclose from ending early)
   const waitingForGoodbyeRef = useRef<boolean>(false);
   
-  // Track last audio data chunk time — used to determine when playback finishes
-  const lastAudioChunkTimeRef = useRef<number>(0);
+  // Track last audio delta time to estimate when audio finishes
   const lastAudioDeltaTimeRef = useRef<number>(0);
   const transcriptLengthRef = useRef<number>(0);
   const eventCountRef = useRef<number>(0);
@@ -66,12 +69,14 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   
   // Track if we're currently in a response (to avoid stale closure issues with status state)
   const inResponseRef = useRef<boolean>(false);
-
   
+  // Response delay from voice5.py (RESPONSE_DELAY_SEC = 0.4)
   const RESPONSE_DELAY_MS = 400;
   
-  // How long to wait after the last audio chunk for WebRTC buffer to drain
-  const BUFFER_DRAIN_MS = 800;
+  // Silence detection thresholds (using RMS audio level)
+  const SILENCE_THRESHOLD = 0.01;  // RMS level below this is considered silence (0-1 scale)
+  const SILENCE_DURATION_MS = 400;  // How long silence must persist to trigger callback
+  const MAX_WAIT_FOR_SILENCE_MS = 15000;  // Maximum time to wait before giving up
 
   // Keep refs to latest callbacks to avoid stale closures in WebRTC event handlers
   const onTranscriptRef = useRef(onTranscript);
@@ -100,28 +105,124 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     onTranscriptRef.current?.(entry);
   }, []);
 
+  // Wait for audio to go silent (actual playback finished)
+  // Uses RMS (Root Mean Square) of time-domain data for accurate silence detection
+  const waitForAudioSilence = useCallback((onSilence: () => void, fallbackDelayMs: number) => {
+    // Clear any existing monitor
+    if (audioMonitorIntervalRef.current) {
+      clearInterval(audioMonitorIntervalRef.current);
+      audioMonitorIntervalRef.current = null;
+    }
+    
+    const analyser = analyserRef.current;
+    if (!analyser) {
+      // Fallback to timer if no analyser available
+      console.log(`[audio] No analyser, using fallback delay: ${fallbackDelayMs}ms`);
+      setTimeout(onSilence, fallbackDelayMs);
+      return;
+    }
+    
+    // Use time-domain data for more accurate silence detection
+    const bufferLength = analyser.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+    let silenceStartTime: number | null = null;
+    const startTime = Date.now();
+    let hasSeenAudio = false;  // Track if we've seen audio at all
+    
+    // Store callback for cleanup
+    onAudioSilenceCallbackRef.current = onSilence;
+    
+    // Check audio levels periodically
+    audioMonitorIntervalRef.current = window.setInterval(() => {
+      analyser.getByteTimeDomainData(dataArray);
+      
+      // Calculate RMS (Root Mean Square) - measures actual audio energy
+      // Time domain data is centered at 128 (silent = all 128s)
+      let sumSquares = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const normalized = (dataArray[i] - 128) / 128;  // Normalize to -1 to 1
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / bufferLength);
+      
+      const isSilent = rms < SILENCE_THRESHOLD;
+      
+      // Only start checking for silence after we've detected some audio
+      if (!isSilent) {
+        hasSeenAudio = true;
+        silenceStartTime = null;
+      } else if (hasSeenAudio) {
+        // Audio has dropped to silence
+        if (!silenceStartTime) {
+          silenceStartTime = Date.now();
+          console.log(`[audio] Silence started (RMS: ${rms.toFixed(4)})`);
+        } else if (Date.now() - silenceStartTime >= SILENCE_DURATION_MS) {
+          // Sustained silence detected after audio was playing
+          console.log(`[audio] Silence confirmed after ${Date.now() - startTime}ms total`);
+          if (audioMonitorIntervalRef.current) {
+            clearInterval(audioMonitorIntervalRef.current);
+            audioMonitorIntervalRef.current = null;
+          }
+          onAudioSilenceCallbackRef.current = null;
+          onSilence();
+          return;
+        }
+      }
+      
+      // Safety timeout - if we've been waiting too long, use fallback
+      if (Date.now() - startTime >= MAX_WAIT_FOR_SILENCE_MS) {
+        console.log('[audio] Max wait time reached, proceeding anyway');
+        if (audioMonitorIntervalRef.current) {
+          clearInterval(audioMonitorIntervalRef.current);
+          audioMonitorIntervalRef.current = null;
+        }
+        onAudioSilenceCallbackRef.current = null;
+        onSilence();
+      }
+    }, 30);  // Check every 30ms for more responsive detection
+  }, []);
+
   const endCall = useCallback(() => {
+    // Prevent duplicate calls
     if (endingCallRef.current) {
       console.log('[endCall] Already ending, skipping duplicate');
       return;
     }
     endingCallRef.current = true;
 
+    // Clear audio monitoring
+    if (audioMonitorIntervalRef.current) {
+      clearInterval(audioMonitorIntervalRef.current);
+      audioMonitorIntervalRef.current = null;
+    }
+    onAudioSilenceCallbackRef.current = null;
+
+    // Close audio context
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    }
+
+    // Close data channel
     if (dataChannelRef.current) {
       dataChannelRef.current.close();
       dataChannelRef.current = null;
     }
 
+    // Close peer connection
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
 
+    // Stop media stream
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
     }
 
+    // Clean up audio element
     if (audioElementRef.current) {
       audioElementRef.current.srcObject = null;
       audioElementRef.current = null;
@@ -168,37 +269,30 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         initialGreetingWatchdogRef.current = null;
       }
 
-      // 1. Get ephemeral token from our API (GA endpoint)
+      // 1. Get ephemeral token from our API
       const sessionResponse = await fetch('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           systemPrompt: systemPrompt || '', 
           voice,
-          variableValues,
+          variableValues,  // All variables including patient_name
         }),
       });
       console.log('[debug-call] /api/session response status:', sessionResponse.status, sessionResponse.statusText);
 
       if (!sessionResponse.ok) {
         const error = await sessionResponse.json();
-        console.log('[debug-call] /api/session error payload:', JSON.stringify(error));
-        console.log('[debug-call] OpenAI error details:', error.openaiError || error.details || 'none');
+        console.log('[debug-call] /api/session error payload:', error);
         throw new Error(error.error || 'Failed to create session');
       }
 
-      const sessionData = await sessionResponse.json();
-      const clientSecretValue = sessionData.client_secret?.value || sessionData.value;
+      const { client_secret } = await sessionResponse.json();
       console.log('[debug-call] got client_secret:', {
-        hasValue: Boolean(clientSecretValue),
-        expiresAt: sessionData.client_secret?.expires_at || sessionData.expires_at,
+        hasValue: Boolean(client_secret?.value),
+        expiresAt: client_secret?.expires_at,
       });
       
-      if (!clientSecretValue) {
-        console.error('[debug-call] No client_secret value found in response:', Object.keys(sessionData));
-        throw new Error('No client secret returned from session endpoint');
-      }
-
       // 2. Create peer connection
       const pc = new RTCPeerConnection();
       peerConnectionRef.current = pc;
@@ -212,20 +306,41 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         console.log('[debug-call] pc.iceGatheringState:', pc.iceGatheringState);
       };
 
-      // 3. Set up audio element for playback
+      // 3. Set up audio element for playback with optimized settings
       const audioEl = document.createElement('audio');
       audioEl.autoplay = true;
       audioEl.playsInline = true;
+      // Preload setting helps with buffering (though WebRTC manages this internally)
       audioEl.preload = 'auto';
       audioElementRef.current = audioEl;
 
+      // Handle incoming audio track
       pc.ontrack = (event) => {
         const stream = event.streams[0];
         audioEl.srcObject = stream;
         
+        // Ensure playback starts immediately when audio is available
         audioEl.play().catch(err => {
           console.log('[audio] Autoplay blocked, user interaction required:', err);
         });
+        
+        // Set up Web Audio API for accurate silence detection
+        try {
+          const audioContext = new AudioContext();
+          audioContextRef.current = audioContext;
+          
+          const source = audioContext.createMediaStreamSource(stream);
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.3;
+          source.connect(analyser);
+          // Don't connect to destination - we use the audio element for playback
+          analyserRef.current = analyser;
+          
+          console.log('[audio] Web Audio API analyser connected for silence detection');
+        } catch (err) {
+          console.log('[audio] Could not set up audio analyser:', err);
+        }
       };
 
       // 4. Get user's microphone
@@ -238,24 +353,19 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       });
       mediaStreamRef.current = stream;
 
+      // Add mic track to peer connection
+      // We'll mute/unmute this track based on assistant speaking (NO_BARGE_IN)
       const audioTrack = stream.getAudioTracks()[0];
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream);
       });
       
+      // Function to mute mic while assistant is speaking (NO_BARGE_IN from voice5.py)
       const updateMicMute = () => {
         if (audioTrack) {
           const shouldMute = assistantSpeakingRef.current;
           audioTrack.enabled = !shouldMute;
           console.log(`[mic] Track enabled: ${audioTrack.enabled} (assistant speaking: ${shouldMute})`);
-          
-          const channel = dataChannelRef.current;
-          if (channel && channel.readyState === 'open') {
-            try {
-              channel.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
-              console.log('[mic] Cleared server input audio buffer');
-            } catch (_) { /* ignore */ }
-          }
         }
       };
 
@@ -300,14 +410,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             return;
           }
           try {
-            const responseObj: Record<string, unknown> = {};
-            if (withInstruction) {
-              responseObj.instructions = 'Begin now with the greeting and first script line.';
-            }
             const payload: Record<string, unknown> = {
               type: 'response.create',
-              ...(Object.keys(responseObj).length > 0 ? { response: responseObj } : {}),
+              response: {
+                output_modalities: ['audio'],
+              },
             };
+            if (withInstruction) {
+              (payload.response as Record<string, unknown>).instructions =
+                'Begin now with the greeting and first script line.';
+            }
             console.log('[debug-call] sending response.create', { reason, withInstruction });
             dc.send(JSON.stringify(payload));
           } catch (sendErr) {
@@ -315,12 +427,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           }
         };
         
+        // Greeting preroll delay from voice5.py (GREETING_PREROLL_SEC = 0.2)
+        // Small delay before sending initial response to ensure connection is stable
         setTimeout(() => {
+          // Mute mic BEFORE triggering greeting (NO_BARGE_IN)
           assistantSpeakingRef.current = true;
           updateMicMute();
           sendKickoffUserItem('initial-open');
           sendResponseCreate('initial-open');
 
+          // Watchdog: if no assistant transcript shows up soon, retry once with explicit instruction.
           if (initialGreetingWatchdogRef.current) {
             clearTimeout(initialGreetingWatchdogRef.current);
           }
@@ -358,18 +474,21 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       dc.onclose = () => {
         console.log('Data channel closed');
+        // If already ending, skip
         if (endingCallRef.current) {
           return;
         }
+        // If waiting for goodbye audio, set a fallback timeout to ensure call ends
         if (waitingForGoodbyeRef.current) {
           setTimeout(() => {
             if (!endingCallRef.current) {
               console.log('[fallback] Ending call after data channel close');
               endCall();
             }
-          }, 2000);
+          }, 2000); // 2s fallback
           return;
         }
+        // Otherwise end immediately
         endCall();
       };
 
@@ -380,13 +499,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         sdpLength: offer.sdp?.length || 0,
       });
 
-      // 7. Send offer to OpenAI GA endpoint and get answer
+      // 7. Send offer to OpenAI Realtime GA endpoint
       const sdpResponse = await fetch(
         'https://api.openai.com/v1/realtime/calls',
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${clientSecretValue}`,
+            'Authorization': `Bearer ${client_secret.value}`,
             'Content-Type': 'application/sdp',
           },
           body: offer.sdp,
@@ -412,11 +531,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       updateStatus('error');
       addTranscript('system', `Error: ${message}`);
     }
+  // All deps are stable (use refs internally) so this callback is created once
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSupported, updateStatus, addTranscript, endCall]);
 
   // Handle server events from data channel
-  // Supports both beta and GA event names for graceful migration
   const handleServerEvent = useCallback((
     data: Record<string, unknown>,
     updateMicMute?: () => void,
@@ -427,56 +546,68 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     switch (eventType) {
       case 'session.created':
       case 'session.updated':
+        // Session ready
         break;
 
       case 'input_audio_buffer.speech_started':
+        // Cancel any pending response timer (user started speaking again)
         if (responseDelayTimerRef.current) {
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
-        }
-        if (assistantSpeakingRef.current) {
-          console.log('[mic] speech_started while assistant speaking — ignoring & clearing buffer');
-          if (dataChannel && dataChannel.readyState === 'open') {
-            try {
-              dataChannel.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
-            } catch (_) { /* ignore */ }
-          }
-          break;
         }
         updateStatus('user_speaking');
         break;
 
       case 'input_audio_buffer.speech_stopped':
-        if (assistantSpeakingRef.current) {
-          console.log('[debug-call] speech_stopped while assistant speaking — ignoring');
-          break;
-        }
         speechStoppedTimeRef.current = Date.now();
         updateStatus('processing');
-        console.log('[debug-call] speech_stopped received (VAD auto-creates response)');
+        console.log('[debug-call] speech_stopped received; scheduling response.create', {
+          delayMs: RESPONSE_DELAY_MS,
+          dcState: dataChannel?.readyState,
+        });
+        
+        // Schedule response creation with delay (like voice5.py _schedule_delayed_response)
+        if (responseDelayTimerRef.current) {
+          clearTimeout(responseDelayTimerRef.current);
+        }
+        responseDelayTimerRef.current = window.setTimeout(() => {
+          if (dataChannel && dataChannel.readyState === 'open') {
+            try {
+              console.log('[debug-call] sending delayed response.create after speech_stopped');
+              dataChannel.send(JSON.stringify({
+                type: 'response.create',
+                response: {
+                  output_modalities: ['audio'],
+                },
+              }));
+            } catch (sendErr) {
+              console.error('[debug-call] failed to send delayed response.create:', sendErr);
+            }
+          } else {
+            console.log('[debug-call] skipped delayed response.create; data channel not open', {
+              dcState: dataChannel?.readyState,
+            });
+          }
+          responseDelayTimerRef.current = null;
+        }, RESPONSE_DELAY_MS);
         break;
 
       case 'response.created':
         currentAssistantTextRef.current = '';
+        // Cancel response timer since response is now in progress
         if (responseDelayTimerRef.current) {
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
         }
+        // NO_BARGE_IN: Mute mic as soon as response starts (before audio plays)
         assistantSpeakingRef.current = true;
         updateMicMute?.();
         console.log('[mic] Muted - response starting');
         break;
 
-      // Track actual audio data chunks for precise playback-end timing
-      case 'response.output_audio.delta':
-      case 'response.audio.delta':
-        lastAudioChunkTimeRef.current = Date.now();
-        break;
-
-      // GA event names (primary)
       case 'response.output_audio_transcript.delta':
-      // Beta fallback
       case 'response.audio_transcript.delta': {
+        // Track when we receive audio deltas to estimate playback
         lastAudioDeltaTimeRef.current = Date.now();
         hasAnyAssistantTranscriptRef.current = true;
         if (initialGreetingWatchdogRef.current) {
@@ -484,11 +615,13 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           initialGreetingWatchdogRef.current = null;
         }
         
+        // Assistant is speaking - first audio chunk (use ref to avoid stale closure)
         if (!inResponseRef.current) {
           inResponseRef.current = true;
           updateStatus('assistant_speaking');
-          transcriptLengthRef.current = 0;
+          transcriptLengthRef.current = 0;  // Reset for new response
           
+          // Calculate latency
           if (speechStoppedTimeRef.current) {
             const latencyMs = Date.now() - speechStoppedTimeRef.current;
             latenciesRef.current.push(latencyMs);
@@ -502,16 +635,16 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           }
         }
         
+        // Accumulate transcript and track length
         const delta = (data.delta as string) || '';
         currentAssistantTextRef.current += delta;
         transcriptLengthRef.current += delta.length;
         break;
       }
 
-      // GA event name (primary)
       case 'response.output_audio_transcript.done':
-      // Beta fallback
       case 'response.audio_transcript.done': {
+        // Full assistant transcript available
         const transcript = (data.transcript as string) || currentAssistantTextRef.current;
         if (transcript) {
           hasAnyAssistantTranscriptRef.current = true;
@@ -521,6 +654,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           }
           addTranscript('assistant', transcript);
           
+          // Check for goodbye - but DON'T end call yet
+          // Wait for response.done when all audio has been sent
           if (containsFinalPhrase(transcript)) {
             console.log('[goodbye] Detected in transcript, will end after audio finishes');
             goodbyeDetectedRef.current = true;
@@ -531,6 +666,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       }
 
       case 'response.done': {
+        // Response complete - all audio has been SENT (may still be playing)
+        // Reset response tracking so next response can start fresh
         inResponseRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
@@ -561,6 +698,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           outputTextLen: outputText.length,
         });
 
+        // Sometimes first response is empty. Retry once to force a spoken intro.
         if (!goodbyeDetectedRef.current && transcriptLen === 0 && !hasAnyAssistantTranscriptRef.current && dataChannel?.readyState === 'open') {
           if (initialGreetingRetryCountRef.current < 1) {
             initialGreetingRetryCountRef.current += 1;
@@ -582,6 +720,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
               dataChannel.send(JSON.stringify({
                 type: 'response.create',
                 response: {
+                  output_modalities: ['audio'],
                   instructions: 'Begin now with the greeting and first script line.',
                 },
               }));
@@ -591,28 +730,36 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           }
         }
         
+        // If goodbye was detected, wait for remaining audio buffer to play then end call
         if (goodbyeDetectedRef.current) {
+          // Mark that we're waiting for goodbye audio - prevents dc.onclose from ending early
           waitingForGoodbyeRef.current = true;
+          
+          // Wait for audio to finish: ~80ms per char, min 5s, max 10s
+          // Increased minimum to ensure goodbye message completes
           const playbackEstimateMs = Math.min(10000, Math.max(5000, transcriptLen * 80));
+          
           setTimeout(() => {
             if (endingCallRef.current) return;
             endCall();
           }, playbackEstimateMs);
         } else {
-          const timeSinceLastChunk = Date.now() - lastAudioChunkTimeRef.current;
-          const remainingMs = Math.max(200, BUFFER_DRAIN_MS - timeSinceLastChunk);
-          console.log(`[audio] Waiting ${remainingMs}ms for buffer drain (last chunk ${timeSinceLastChunk}ms ago)`);
+          // Wait for remaining audio buffer then unmute mic
+          // ~55ms per char, min 1s, max 6s
+          const playbackEstimateMs = Math.min(6000, Math.max(1000, transcriptLen * 55));
+          
           setTimeout(() => {
             if (endingCallRef.current) return;
             assistantSpeakingRef.current = false;
             updateMicMute?.();
             updateStatus('listening');
-          }, remainingMs);
+          }, playbackEstimateMs);
         }
         break;
       }
 
       case 'conversation.item.input_audio_transcription.completed': {
+        // User speech transcribed - display immediately
         const transcript = (data.transcript as string) || '';
         if (transcript) {
           addTranscript('user', transcript);
@@ -629,10 +776,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       }
 
       default:
+        // Ignore other events
         break;
     }
+  // All deps are stable (use refs internally) so this callback is created once
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateStatus, addTranscript, endCall]);
+  }, [updateStatus, addTranscript, endCall, waitForAudioSilence]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -640,7 +789,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       if (initialGreetingWatchdogRef.current) {
         clearTimeout(initialGreetingWatchdogRef.current);
       }
-      
+      if (audioMonitorIntervalRef.current) {
+        clearInterval(audioMonitorIntervalRef.current);
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+      }
       if (peerConnectionRef.current) {
         peerConnectionRef.current.close();
       }

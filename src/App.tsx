@@ -296,13 +296,20 @@ function App() {
           currentStepIdRef.current = newStep; // Update ref immediately
         }
       } else if (entry.role === 'user') {
+        // Use ref for latest step ID (handles rapid updates)
         const stepId = currentStepIdRef.current;
         console.log(`[match] User said: "${entry.text}", current step: "${stepId}"`);
-
         if (stepId) {
+          // Use LLM matching for better accuracy (async, won't block conversation)
           const step = activeFlowMap.steps.find(s => s.id === stepId);
           if (step) {
             console.log(`[match] Matching against step "${stepId}" with ${step.options.length} options: ${step.options.map(o => o.label).join(', ')}`);
+            console.log('[debug-match] current active step detail:', {
+              id: step.id,
+              label: step.label,
+              question: step.question,
+              options: step.options.map((o, idx) => ({ idx, label: o.label, next: o.next })),
+            });
             const transcriptSoFar = updated
               .filter(t => t.role === 'assistant' || t.role === 'user')
               .map(t => `${t.role === 'assistant' ? 'Assistant' : 'User'}: ${t.text}`)
@@ -311,6 +318,8 @@ function App() {
           } else {
             console.log(`[match] WARNING: Step "${stepId}" not found in flow map`);
           }
+        } else {
+          console.log(`[match] WARNING: No current step set when user spoke`);
         }
       }
 

@@ -1,8 +1,8 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 
 /**
- * Creates an ephemeral token for browser WebRTC connection to OpenAI Realtime API (GA).
- * Uses /v1/realtime/client_secrets with the GA session config shape.
+ * Creates an ephemeral token for browser WebRTC connection to OpenAI Realtime API.
+ * This keeps the API key server-side while allowing browser audio streaming.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -18,11 +18,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { 
       systemPrompt, 
       voice = 'cedar', 
-      variableValues = {},
+      variableValues = {}  // All variable values including patient_name
     } = req.body || {};
 
+    // Use provided system prompt or fall back to default
     let instructions = systemPrompt;
     
+    // If no custom prompt provided, use the default
     if (!instructions || instructions.trim().length === 0) {
       instructions = getDefaultSystemPrompt();
     }
@@ -30,6 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('[session] Received prompt length:', instructions.length);
     console.log('[session] Variable values:', JSON.stringify(variableValues));
     
+    // Replace ALL variable placeholders with their values (patient_name, street_address, etc.)
     for (const [varName, value] of Object.entries(variableValues)) {
       if (value && typeof value === 'string') {
         const regex = new RegExp(`\\[${varName}\\]`, 'gi');
@@ -41,68 +44,78 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
     
+    // Remove any remaining unfilled placeholders
     const remainingPlaceholders = instructions.match(/\[[a-z0-9_]+\]/gi);
     if (remainingPlaceholders) {
       console.log('[session] WARNING: Removing unfilled placeholders:', remainingPlaceholders);
     }
     instructions = instructions.replace(/\[[a-z0-9_]+\]/gi, '');
+    // Clean up artifacts from removed placeholders
     instructions = instructions.replace(/,\s*,/g, ',');
     instructions = instructions.replace(/\s{2,}/g, ' ');
 
-    const sessionConfig: Record<string, any> = {
-      type: 'realtime',
-      model: 'gpt-4o-realtime-preview-2024-12-17',
-      instructions: instructions.trim(),
-      output_modalities: ['audio'],
-      audio: {
-        input: {
-          format: { type: 'audio/pcm', rate: 24000 },
-          transcription: { model: 'whisper-1' },
-          noise_reduction: { type: 'near_field' },
-          turn_detection: {
-            type: 'semantic_vad',
-            eagerness: 'medium',
-            create_response: true,
-            interrupt_response: false,
-          },
-        },
-        output: {
-          voice: voice,
-          format: { type: 'audio/pcm', rate: 24000 },
-        },
-      },
-      max_output_tokens: 1024,
-    };
-
+    // Create ephemeral token via OpenAI Realtime GA API
     const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ session: sessionConfig }),
+      body: JSON.stringify({
+        session: {
+          type: 'realtime',
+          model: 'gpt-realtime',
+          instructions: instructions.trim(),
+          output_modalities: ['audio'],
+          audio: {
+            input: {
+              format: { type: 'audio/pcm', rate: 24000 },
+              noise_reduction: { type: 'near_field' },
+              transcription: {
+                model: 'gpt-4o-mini-transcribe',
+              },
+              turn_detection: {
+                type: 'server_vad',
+                silence_duration_ms: 400,
+                prefix_padding_ms: 200,
+                threshold: 0.6,
+                create_response: false,
+              },
+            },
+            output: {
+              format: { type: 'audio/pcm', rate: 24000 },
+              voice: voice,
+            },
+          },
+          max_output_tokens: 1024,
+        },
+      }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('OpenAI session error:', errorText);
-      let parsedError: any = null;
-      try { parsedError = JSON.parse(errorText); } catch { /* raw text */ }
+      console.error('[session] Full error:', errorText.slice(0, 2000));
       return res.status(response.status).json({ 
         error: `Failed to create session: ${response.statusText}`,
-        details: errorText,
-        openaiError: parsedError?.error || parsedError || errorText,
+        details: errorText 
       });
     }
 
     const data = await response.json();
     console.log('[session] GA response keys:', Object.keys(data));
+
+    // GA endpoint returns { value, expires_at, session } directly
+    // Normalize for client compatibility (client expects data.client_secret.value)
+    const clientSecret = data.client_secret || { value: data.value, expires_at: data.expires_at };
     
-    const clientSecret = data.client_secret || data;
-    
+    if (!clientSecret.value) {
+      console.error('[session] No client secret value found in response:', JSON.stringify(data).slice(0, 500));
+      return res.status(500).json({ error: 'No client secret returned from API' });
+    }
+
     return res.status(200).json({
       client_secret: clientSecret,
-      expires_at: clientSecret.expires_at || data.expires_at,
     });
   } catch (error) {
     console.error('Session creation error:', error);
