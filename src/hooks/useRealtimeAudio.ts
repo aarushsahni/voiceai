@@ -405,16 +405,14 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             return;
           }
           try {
+            const responseObj: Record<string, unknown> = {};
+            if (withInstruction) {
+              responseObj.instructions = 'Begin now with the greeting and first script line.';
+            }
             const payload: Record<string, unknown> = {
               type: 'response.create',
-              response: {
-                modalities: ['audio', 'text'],
-              },
+              ...(Object.keys(responseObj).length > 0 ? { response: responseObj } : {}),
             };
-            if (withInstruction) {
-              (payload.response as Record<string, unknown>).instructions =
-                'Begin now with the greeting and first script line.';
-            }
             console.log('[debug-call] sending response.create', { reason, withInstruction });
             dc.send(JSON.stringify(payload));
           } catch (sendErr) {
@@ -561,9 +559,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
               console.log('[debug-call] sending delayed response.create after speech_stopped');
               dataChannel.send(JSON.stringify({
                 type: 'response.create',
-                response: {
-                  modalities: ['audio', 'text'],
-                },
               }));
             } catch (sendErr) {
               console.error('[debug-call] failed to send delayed response.create:', sendErr);
@@ -694,7 +689,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
             // Trigger response continuation after tool output
             dataChannel.send(JSON.stringify({
               type: 'response.create',
-              response: { modalities: ['audio', 'text'] },
             }));
           } catch (sendErr) {
             console.error('[tool-call] Failed to send function_call_output:', sendErr);
@@ -755,7 +749,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
               dataChannel.send(JSON.stringify({
                 type: 'response.create',
                 response: {
-                  modalities: ['audio', 'text'],
                   instructions: 'Begin now with the greeting and first script line.',
                 },
               }));
