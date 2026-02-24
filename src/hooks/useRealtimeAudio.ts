@@ -105,7 +105,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     onTranscriptRef.current?.(entry);
   }, []);
 
-  const waitForAudioSilence = useCallback((onSilence: () => void, fallbackDelayMs: number) => {
+  const waitForAudioSilence = useCallback((onSilence: () => void, fallbackDelayMs: number, minWaitMs: number = 0, silenceDurationOverride?: number) => {
     if (audioMonitorIntervalRef.current) {
       clearInterval(audioMonitorIntervalRef.current);
       audioMonitorIntervalRef.current = null;
@@ -126,7 +126,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
     
     onAudioSilenceCallbackRef.current = onSilence;
     
+    const requiredSilenceMs = silenceDurationOverride ?? SILENCE_DURATION_MS;
+
     audioMonitorIntervalRef.current = window.setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < minWaitMs) return;
+
       analyser.getByteTimeDomainData(dataArray);
       
       let sumSquares = 0;
@@ -145,7 +150,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         if (!silenceStartTime) {
           silenceStartTime = Date.now();
           console.log(`[audio] Silence started (RMS: ${rms.toFixed(4)})`);
-        } else if (Date.now() - silenceStartTime >= SILENCE_DURATION_MS) {
+        } else if (Date.now() - silenceStartTime >= requiredSilenceMs) {
           console.log(`[audio] Silence confirmed after ${Date.now() - startTime}ms total`);
           if (audioMonitorIntervalRef.current) {
             clearInterval(audioMonitorIntervalRef.current);
@@ -695,11 +700,12 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         
         if (goodbyeDetectedRef.current) {
           waitingForGoodbyeRef.current = true;
-          const fallbackMs = Math.min(15000, Math.max(5000, transcriptLen * 80));
+          const minWaitMs = Math.min(8000, Math.max(3000, transcriptLen * 60));
+          const fallbackMs = Math.min(20000, Math.max(8000, transcriptLen * 100));
           waitForAudioSilence(() => {
             if (endingCallRef.current) return;
             endCall();
-          }, fallbackMs);
+          }, fallbackMs, minWaitMs, 1500);
         } else {
           const fallbackMs = Math.min(12000, Math.max(2000, transcriptLen * 80));
           waitForAudioSilence(() => {
