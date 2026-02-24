@@ -700,12 +700,11 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         
         if (goodbyeDetectedRef.current) {
           waitingForGoodbyeRef.current = true;
-          const minWaitMs = Math.min(8000, Math.max(3000, transcriptLen * 60));
-          const fallbackMs = Math.min(20000, Math.max(8000, transcriptLen * 100));
-          waitForAudioSilence(() => {
+          const playbackEstimateMs = Math.min(10000, Math.max(5000, transcriptLen * 80));
+          setTimeout(() => {
             if (endingCallRef.current) return;
             endCall();
-          }, fallbackMs, minWaitMs, 1500);
+          }, playbackEstimateMs);
         } else {
           const fallbackMs = Math.min(12000, Math.max(2000, transcriptLen * 80));
           waitForAudioSilence(() => {
