@@ -2,17 +2,10 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { CallStatus, TranscriptEntry, LatencyInfo } from '../types';
 import { containsFinalPhrase } from '../utils/scripts';
 
-export interface ToolCallArgs {
-  name: string;
-  arguments: Record<string, unknown>;
-  callId: string;
-}
-
 interface UseRealtimeAudioOptions {
   onTranscript?: (entry: TranscriptEntry) => void;
   onStatusChange?: (status: CallStatus) => void;
   onError?: (error: string) => void;
-  onToolCall?: (toolCall: ToolCallArgs) => void;
 }
 
 interface UseRealtimeAudioReturn {
@@ -21,15 +14,14 @@ interface UseRealtimeAudioReturn {
   startCall: (
     systemPrompt?: string, 
     voice?: string, 
-    variableValues?: Record<string, string>,
-    useToolMatching?: boolean
+    variableValues?: Record<string, string>
   ) => Promise<void>;
   endCall: () => void;
   isSupported: boolean;
 }
 
 export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseRealtimeAudioReturn {
-  const { onTranscript, onStatusChange, onError, onToolCall } = options;
+  const { onTranscript, onStatusChange, onError } = options;
   
   const [status, setStatus] = useState<CallStatus>('idle');
   const [latency, setLatency] = useState<LatencyInfo>({
@@ -78,11 +70,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   // Track if we're currently in a response (to avoid stale closure issues with status state)
   const inResponseRef = useRef<boolean>(false);
 
-  // Accumulate function call arguments across delta events
-  const pendingFunctionCallRef = useRef<{ callId: string; name: string; args: string } | null>(null);
-
-  // Track whether the API currently has an active response (response.created → response.done)
-  const responseActiveRef = useRef<boolean>(false);
   
   const RESPONSE_DELAY_MS = 400;
   
@@ -95,11 +82,9 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const onTranscriptRef = useRef(onTranscript);
   const onStatusChangeRef = useRef(onStatusChange);
   const onErrorRef = useRef(onError);
-  const onToolCallRef = useRef(onToolCall);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
   useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
-  useEffect(() => { onToolCallRef.current = onToolCall; }, [onToolCall]);
 
   const isSupported = typeof navigator !== 'undefined' && 
     'mediaDevices' in navigator && 
@@ -231,8 +216,7 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
   const startCall = useCallback(async (
     systemPrompt?: string,
     voice: string = 'cedar',
-    variableValues: Record<string, string> = {},
-    useToolMatching: boolean = false
+    variableValues: Record<string, string> = {}
   ) => {
     if (!isSupported) {
       onErrorRef.current?.('Browser does not support audio recording');
@@ -247,7 +231,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         promptLength: systemPrompt?.length || 0,
         voice,
         variableKeys: Object.keys(variableValues || {}),
-        useToolMatching,
       });
 
       // Reset state
@@ -261,7 +244,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
       transcriptLengthRef.current = 0;
       hasAnyAssistantTranscriptRef.current = false;
       initialGreetingRetryCountRef.current = 0;
-      pendingFunctionCallRef.current = null;
       if (initialGreetingWatchdogRef.current) {
         clearTimeout(initialGreetingWatchdogRef.current);
         initialGreetingWatchdogRef.current = null;
@@ -275,7 +257,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
           systemPrompt: systemPrompt || '', 
           voice,
           variableValues,
-          useToolMatching,
         }),
       });
       console.log('[debug-call] /api/session response status:', sessionResponse.status, sessionResponse.statusText);
@@ -561,7 +542,6 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
 
       case 'response.created':
         currentAssistantTextRef.current = '';
-        responseActiveRef.current = true;
         if (responseDelayTimerRef.current) {
           clearTimeout(responseDelayTimerRef.current);
           responseDelayTimerRef.current = null;
@@ -628,70 +608,8 @@ export function useRealtimeAudio(options: UseRealtimeAudioOptions = {}): UseReal
         break;
       }
 
-      // Function calling: accumulate argument deltas
-      case 'response.function_call_arguments.delta': {
-        const fnDelta = (data.delta as string) || '';
-        if (!pendingFunctionCallRef.current) {
-          pendingFunctionCallRef.current = {
-            callId: (data.call_id as string) || '',
-            name: (data.name as string) || '',
-            args: fnDelta,
-          };
-        } else {
-          pendingFunctionCallRef.current.args += fnDelta;
-        }
-        break;
-      }
-
-      // Function calling: complete — parse args, fire callback, send result
-      case 'response.function_call_arguments.done': {
-        const callId = (data.call_id as string) || pendingFunctionCallRef.current?.callId || '';
-        const fnName = (data.name as string) || pendingFunctionCallRef.current?.name || '';
-        const rawArgs = (data.arguments as string) || pendingFunctionCallRef.current?.args || '{}';
-        pendingFunctionCallRef.current = null;
-
-        console.log(`[tool-call] Function call complete: ${fnName}`, { callId, rawArgs });
-
-        try {
-          const parsedArgs = JSON.parse(rawArgs);
-          onToolCallRef.current?.({
-            name: fnName,
-            arguments: parsedArgs,
-            callId,
-          });
-        } catch (parseErr) {
-          console.error('[tool-call] Failed to parse function arguments:', parseErr, { rawArgs });
-        }
-
-        // Send tool result back so the model can continue speaking
-        if (dataChannel && dataChannel.readyState === 'open') {
-          try {
-            dataChannel.send(JSON.stringify({
-              type: 'conversation.item.create',
-              item: {
-                type: 'function_call_output',
-                call_id: callId,
-                output: JSON.stringify({ status: 'recorded' }),
-              },
-            }));
-            // Only trigger new response if no response is currently active
-            if (!responseActiveRef.current) {
-              dataChannel.send(JSON.stringify({
-                type: 'response.create',
-              }));
-            } else {
-              console.log('[tool-call] Skipping response.create — response already active');
-            }
-          } catch (sendErr) {
-            console.error('[tool-call] Failed to send function_call_output:', sendErr);
-          }
-        }
-        break;
-      }
-
       case 'response.done': {
         inResponseRef.current = false;
-        responseActiveRef.current = false;
         
         const transcriptLen = transcriptLengthRef.current;
         const responseObj = data.response as any;

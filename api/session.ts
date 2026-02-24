@@ -19,7 +19,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       systemPrompt, 
       voice = 'cedar', 
       variableValues = {},
-      useToolMatching = false,
     } = req.body || {};
 
     let instructions = systemPrompt;
@@ -30,7 +29,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     console.log('[session] Received prompt length:', instructions.length);
     console.log('[session] Variable values:', JSON.stringify(variableValues));
-    console.log('[session] useToolMatching:', useToolMatching);
     
     for (const [varName, value] of Object.entries(variableValues)) {
       if (value && typeof value === 'string') {
@@ -50,37 +48,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     instructions = instructions.replace(/\[[a-z0-9_]+\]/gi, '');
     instructions = instructions.replace(/,\s*,/g, ',');
     instructions = instructions.replace(/\s{2,}/g, ' ');
-
-    if (useToolMatching) {
-      instructions += `\n\nTOOL USAGE — report_patient_selection:
-After EVERY patient response to a question step, you MUST call the "report_patient_selection" tool to report which option the patient chose.
-- "step_id": the step ID from the BRANCHING RULES (e.g. "language", "confirm")
-- "selected_option": the EXACT label text of the matched option (e.g. "English", "Yes")
-- Call this tool BEFORE or WHILE speaking your next line — do NOT skip it.
-- If no option matches, still call the tool with selected_option set to "none".`;
-    }
-
-    const tools: any[] = useToolMatching ? [
-      {
-        type: 'function',
-        name: 'report_patient_selection',
-        description: 'Report which option the patient selected after answering a question. Call this for every patient response to a question step.',
-        parameters: {
-          type: 'object',
-          properties: {
-            step_id: {
-              type: 'string',
-              description: 'The step ID from the branching rules (e.g. "language", "confirm", "general_status")',
-            },
-            selected_option: {
-              type: 'string',
-              description: 'The exact label text of the option the patient chose (e.g. "English", "Yes", "As expected"). Use "none" if no option matches.',
-            },
-          },
-          required: ['step_id', 'selected_option'],
-        },
-      },
-    ] : [];
 
     const sessionConfig: Record<string, any> = {
       type: 'realtime',
@@ -107,11 +74,6 @@ After EVERY patient response to a question step, you MUST call the "report_patie
       },
       max_output_tokens: 1024,
     };
-
-    if (tools.length > 0) {
-      sessionConfig.tools = tools;
-      sessionConfig.tool_choice = 'auto';
-    }
 
     const response = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
