@@ -17,6 +17,12 @@ OPENAI_API_KEY=sk-...
 
 (The harness loads `.env.local` itself — no need to export it.)
 
+### Quickest way to watch a call
+
+Double-click **`sim/watch.command`** in Finder (or run `npm run sim:watch`). It starts the
+local server and opens your browser to the viewer automatically — pick a scenario, press
+Start, and watch + hear the call. Runs entirely on your machine; your key never leaves it.
+
 ## Tier 1 — logic & conversation
 
 ```bash

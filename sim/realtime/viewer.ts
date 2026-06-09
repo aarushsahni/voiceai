@@ -183,6 +183,20 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
   res.writeHead(404).end('not found');
 }
 
-createServer(handle).listen(PORT, () => {
-  console.log(`\n🎬 Call viewer running — open  http://localhost:${PORT}\n`);
+const server = createServer(handle);
+
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n⚠️  Port ${PORT} is already in use — the viewer may already be running.\n   Open http://localhost:${PORT} , or stop the other instance and retry.\n`);
+    process.exit(1);
+  }
+  throw err;
+});
+
+server.listen(PORT, () => {
+  const url = `http://localhost:${PORT}`;
+  console.log(`\n🎬 Call viewer running — ${url}\n   (Ctrl+C to stop)\n`);
+  // Auto-open the default browser so it's effectively one-click.
+  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+  import('node:child_process').then(({ exec }) => exec(`${opener} ${url}`, () => {})).catch(() => {});
 });
