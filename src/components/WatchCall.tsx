@@ -1,32 +1,30 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Play, Loader2, Eye } from 'lucide-react';
-import { TranscriptEntry, LatencyInfo } from '../types';
-import { defaultFlowMap, inferFlowStep } from '../utils/scripts';
+import { TranscriptEntry, LatencyInfo, FlowMap as FlowMapType } from '../types';
+import { defaultFlowMap, inferFlowStep, getSystemPrompt } from '../utils/scripts';
+import { buildFullSystemPrompt } from '../utils/basePrompt';
+import { SavedScript } from './ScriptConfig';
 import { FlowMap } from './FlowMap';
 import { Transcript } from './Transcript';
 import { LatencyTracker } from './LatencyTracker';
 
-interface ScenarioInfo {
-  name: string;
-  label: string;
-  turns: number;
-}
+const SAVED_SCRIPTS_KEY = 'ivr-saved-scripts';
+const ED_ID = 'ed-followup-v1';
 
 type QueueItem = { role: 'agent' | 'patient'; text: string; pcmB64: string; latencyMs: number | null };
 
 /**
- * "Watch a Call" — plays back a SIMULATED call (a scripted patient talking to the real
- * gpt-realtime agent) streamed from /api/sim-run. Shows the same flow tree + live
- * transcript + latency as a real call, with the matched option highlighted green as the
- * (simulated) patient answers — driven by inferFlowStep + /api/match, exactly like the
- * real call does.
+ * "Watch a Call" — plays back a SIMULATED call (an LLM-driven patient talking to the real
+ * gpt-realtime agent) for any of the same scripts available in "Conduct a Call". Shows the
+ * script's flow tree + live transcript + latency, with the matched option highlighted green
+ * as the patient answers — driven by inferFlowStep + /api/match, exactly like a real call.
  */
 export function WatchCall() {
-  const [scenarios, setScenarios] = useState<ScenarioInfo[]>([]);
-  const [scenario, setScenario] = useState('cooperative-home');
+  const [savedScripts, setSavedScripts] = useState<SavedScript[]>([]);
+  const [scriptId, setScriptId] = useState(ED_ID);
   const [patientName, setPatientName] = useState('');
   const [running, setRunning] = useState(false);
-  const [statusText, setStatusText] = useState('Pick a scenario and press "Watch call".');
+  const [statusText, setStatusText] = useState('Pick a script and press "Watch call".');
 
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
@@ -34,22 +32,42 @@ export function WatchCall() {
   const [matchedOptions, setMatchedOptions] = useState<Map<string, string>>(new Map());
   const [latency, setLatency] = useState<LatencyInfo>({ lastTurnMs: null, avgMs: null, turnCount: 0 });
 
-  const esRef = useRef<EventSource | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const queueRef = useRef<QueueItem[]>([]);
   const playingRef = useRef(false);
   const transcriptsRef = useRef<TranscriptEntry[]>([]);
   const currentStepIdRef = useRef<string | null>(null);
   const latenciesRef = useRef<number[]>([]);
+  const flowMapRef = useRef<FlowMapType>(defaultFlowMap);
 
+  // Load saved scripts (same store the "Conduct a Call" config uses).
   useEffect(() => {
-    fetch('/api/sim-run?list')
-      .then((r) => r.json())
-      .then((list) => setScenarios(list))
-      .catch(() => setScenarios([]));
+    try {
+      const raw = localStorage.getItem(SAVED_SCRIPTS_KEY);
+      if (raw) setSavedScripts(JSON.parse(raw));
+    } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => () => { esRef.current?.close(); audioCtxRef.current?.close().catch(() => {}); }, []);
+  useEffect(() => () => { abortRef.current?.abort(); audioCtxRef.current?.close().catch(() => {}); }, []);
+
+  // The flow map shown in the tree depends on which script is selected.
+  const activeFlowMap = useMemo<FlowMapType>(() => {
+    if (scriptId === ED_ID) return defaultFlowMap;
+    const s = savedScripts.find((x) => x.id === scriptId);
+    return s?.flowMap || { title: s?.name || 'Script', steps: [] };
+  }, [scriptId, savedScripts]);
+
+  // Build the agent instructions for the selected script (same prompt as a real call).
+  const buildInstructions = (): string => {
+    const name = patientName.trim() || 'Maria';
+    const sub = (t: string) =>
+      t.replace(/\[patient_name\]/gi, name).replace(/\[[a-z0-9_]+\]/gi, '').replace(/,\s*,/g, ',').replace(/\s{2,}/g, ' ').trim();
+    if (scriptId === ED_ID) return sub(getSystemPrompt(ED_ID));
+    const s = savedScripts.find((x) => x.id === scriptId);
+    if (!s) return sub(getSystemPrompt(ED_ID));
+    return buildFullSystemPrompt(sub(s.generatedScriptContent || ''), sub(s.generatedGreeting || ''), s.flowMap || undefined);
+  };
 
   const pcmToBuffer = (ctx: AudioContext, b64: string): AudioBuffer => {
     const bin = atob(b64);
@@ -67,12 +85,10 @@ export function WatchCall() {
     const entry: TranscriptEntry = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, role, text, timestamp: new Date() };
     transcriptsRef.current = [...transcriptsRef.current, entry];
     setTranscripts(transcriptsRef.current);
-    return entry;
   };
 
-  // When the agent speaks, advance the flow tree (same logic as App.tsx).
   const advanceFlowFromAgent = () => {
-    const newStep = inferFlowStep(transcriptsRef.current.map((t) => ({ role: t.role, text: t.text })), defaultFlowMap);
+    const newStep = inferFlowStep(transcriptsRef.current.map((t) => ({ role: t.role, text: t.text })), flowMapRef.current);
     const prev = currentStepIdRef.current;
     if (newStep && newStep !== prev) {
       if (prev) setCompletedSteps((c) => new Set([...c, prev]));
@@ -81,16 +97,13 @@ export function WatchCall() {
     }
   };
 
-  // When the patient answers, match it to an option and highlight it green (via /api/match).
   const matchPatientAnswer = async (userText: string) => {
     const stepId = currentStepIdRef.current;
     if (!stepId) return;
-    const step = defaultFlowMap.steps.find((s) => s.id === stepId);
+    const step = flowMapRef.current.steps.find((s) => s.id === stepId);
     if (!step || step.options.length < 2) return;
     try {
-      const transcriptSoFar = transcriptsRef.current
-        .map((t) => `${t.role === 'assistant' ? 'Assistant' : 'User'}: ${t.text}`)
-        .join('\n');
+      const transcriptSoFar = transcriptsRef.current.map((t) => `${t.role === 'assistant' ? 'Assistant' : 'User'}: ${t.text}`).join('\n');
       const res = await fetch('/api/match', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -99,15 +112,10 @@ export function WatchCall() {
       if (!res.ok) return;
       const data = await res.json();
       let label: string | null = null;
-      if (typeof data.matchedIndex === 'number' && data.matchedIndex >= 0 && data.matchedIndex < step.options.length) {
-        label = step.options[data.matchedIndex].label;
-      } else if (data.match) {
-        label = data.match;
-      }
+      if (typeof data.matchedIndex === 'number' && data.matchedIndex >= 0 && data.matchedIndex < step.options.length) label = step.options[data.matchedIndex].label;
+      else if (data.match) label = data.match;
       if (label) setMatchedOptions((prev) => new Map([...prev, [stepId, label as string]]));
-    } catch {
-      /* matching is best-effort */
-    }
+    } catch { /* best-effort */ }
   };
 
   const playNext = useCallback(() => {
@@ -116,7 +124,6 @@ export function WatchCall() {
     if (!item) { playingRef.current = false; return; }
     playingRef.current = true;
 
-    // Reveal the bubble + update the flow tree in sync with the audio.
     if (item.role === 'agent') {
       addTranscript('assistant', item.text);
       advanceFlowFromAgent();
@@ -141,7 +148,6 @@ export function WatchCall() {
         src.connect(ctx.destination);
         src.onended = finishItem;
         src.start();
-        // Safety: advance even if onended never fires (e.g. headless / suspended ctx).
         setTimeout(finishItem, buf.duration * 1000 + 1200);
       } catch { setTimeout(finishItem, 500); }
     } else {
@@ -151,9 +157,8 @@ export function WatchCall() {
 
   const enqueue = (item: QueueItem) => { queueRef.current.push(item); playNext(); };
 
-  const start = () => {
+  const start = async () => {
     if (running) return;
-    // Reset
     if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     audioCtxRef.current.resume();
     queueRef.current = [];
@@ -161,6 +166,7 @@ export function WatchCall() {
     transcriptsRef.current = [];
     currentStepIdRef.current = null;
     latenciesRef.current = [];
+    flowMapRef.current = activeFlowMap;
     setTranscripts([]);
     setCurrentStepId(null);
     setCompletedSteps(new Set());
@@ -169,48 +175,66 @@ export function WatchCall() {
     setRunning(true);
     setStatusText('Starting…');
 
-    const params = new URLSearchParams({ scenario });
-    if (patientName.trim()) params.set('name', patientName.trim());
-    const es = new EventSource(`/api/sim-run?${params.toString()}`);
-    esRef.current = es;
-    es.onmessage = (ev) => {
-      const e = JSON.parse(ev.data);
-      if (e.type === 'status') setStatusText(e.text);
-      else if (e.type === 'agent') enqueue({ role: 'agent', text: e.text, pcmB64: e.audioPcmB64, latencyMs: e.latencyMs ?? null });
-      else if (e.type === 'patient') enqueue({ role: 'patient', text: e.text, pcmB64: e.audioPcmB64, latencyMs: null });
-      else if (e.type === 'done') {
-        es.close();
-        esRef.current = null;
-        setStatusText(e.reachedGoodbye ? 'Call completed ✓' : 'Call ended');
-        setRunning(false);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    try {
+      const resp = await fetch('/api/sim-run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions: buildInstructions(), patientName: patientName.trim() || 'Maria' }),
+        signal: ac.signal,
+      });
+      if (!resp.ok || !resp.body) throw new Error(`server ${resp.status}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      // Read the SSE stream, buffering across chunk boundaries (audio payloads are large).
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          if (!frame.startsWith('data:')) continue;
+          const e = JSON.parse(frame.slice(5).trim());
+          if (e.type === 'status') setStatusText(e.text);
+          else if (e.type === 'agent') enqueue({ role: 'agent', text: e.text, pcmB64: e.audioPcmB64, latencyMs: e.latencyMs ?? null });
+          else if (e.type === 'patient') enqueue({ role: 'patient', text: e.text, pcmB64: e.audioPcmB64, latencyMs: null });
+          else if (e.type === 'done') setStatusText(e.reachedGoodbye ? 'Call completed ✓' : 'Call ended');
+        }
       }
-    };
-    es.onerror = () => { setStatusText('Stream error — see console'); es.close(); esRef.current = null; setRunning(false); };
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === 'AbortError')) setStatusText('Stream error — see console');
+    } finally {
+      setRunning(false);
+      abortRef.current = null;
+    }
   };
+
+  const scriptOptions = [{ id: ED_ID, name: 'ED Follow-up (Standard)' }, ...savedScripts.map((s) => ({ id: s.id, name: s.name }))];
 
   return (
     <div>
-      {/* Controls */}
       <div className="mb-6 bg-white rounded-lg border border-slate-200 shadow-sm p-4">
         <div className="flex items-center gap-2 mb-3">
           <Eye className="w-5 h-5 text-indigo-600" />
           <span className="font-semibold text-slate-800">Watch a Simulated Call</span>
         </div>
         <p className="text-sm text-slate-500 mb-4">
-          A scripted patient talks to the real AI agent so you can watch the flow and hear the call — no microphone needed.
+          A simulated patient talks to the real AI agent so you can watch the flow and hear the call — no microphone needed.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[220px]">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Scenario</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Script</label>
             <select
-              value={scenario}
-              onChange={(e) => setScenario(e.target.value)}
+              value={scriptId}
+              onChange={(e) => setScriptId(e.target.value)}
               disabled={running}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100"
             >
-              {scenarios.map((s) => (
-                <option key={s.name} value={s.name}>{s.label} ({s.turns} turns)</option>
-              ))}
+              {scriptOptions.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
             </select>
           </div>
           <div className="w-44">
@@ -233,15 +257,17 @@ export function WatchCall() {
           </button>
         </div>
         <div className="mt-3 flex items-center gap-2 text-sm">
-          <span className={`relative flex h-2.5 w-2.5`}>
+          <span className="relative flex h-2.5 w-2.5">
             {running && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />}
             <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${running ? 'bg-indigo-500' : 'bg-slate-300'}`} />
           </span>
           <span className="text-slate-600">{statusText}</span>
         </div>
+        {savedScripts.length === 0 && (
+          <p className="mt-2 text-xs text-slate-400">Tip: generate &amp; <b>Save</b> a script in "Conduct a Call" and it will appear here too.</p>
+        )}
       </div>
 
-      {/* Latency */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <div className="bg-indigo-50 rounded-lg border border-indigo-200 p-4 flex items-center text-sm text-indigo-700">
           🔊 Audio plays through your speakers — agent (AI) and patient (simulated) voices.
@@ -249,10 +275,9 @@ export function WatchCall() {
         <LatencyTracker latency={latency} />
       </div>
 
-      {/* Flow tree + transcript */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <FlowMap
-          flowMap={defaultFlowMap}
+          flowMap={activeFlowMap}
           currentStepId={currentStepId}
           completedSteps={completedSteps}
           matchedOptions={matchedOptions}
