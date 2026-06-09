@@ -10,10 +10,12 @@ import { LatencyTracker } from './components/LatencyTracker';
 import { CallSummary } from './components/CallSummary';
 import { CallbackAlert } from './components/CallbackAlert';
 import { ScriptConfig, ScriptSettings, InputType } from './components/ScriptConfig';
+import { WatchCall } from './components/WatchCall';
 import { defaultFlowMap, inferFlowStep, getSystemPrompt } from './utils/scripts';
 import { buildFullSystemPrompt } from './utils/basePrompt';
 
 function App() {
+  const [mode, setMode] = useState<'conduct' | 'watch'>('conduct');
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [currentStepId, setCurrentStepId] = useState<string | null>(null);
@@ -519,16 +521,32 @@ function App() {
       {/* Header */}
       <header className="bg-[#0051a5] text-white shadow-md">
         <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-white/10 rounded-lg flex items-center justify-center">
-              <Stethoscope className="w-7 h-7" />
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-white/10 rounded-lg flex items-center justify-center">
+                <Stethoscope className="w-7 h-7" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold">Penn Medicine Lancaster General Health</h1>
+                <p className="text-blue-200 text-sm">
+                  Emergency Department Follow-Up Call System
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold">Penn Medicine Lancaster General Health</h1>
-              <p className="text-blue-200 text-sm">
-                Emergency Department Follow-Up Call System
-              </p>
-            </div>
+            <nav className="flex items-center gap-1 bg-white/10 rounded-lg p-1 flex-shrink-0">
+              <button
+                onClick={() => setMode('conduct')}
+                className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${mode === 'conduct' ? 'bg-white text-[#0051a5]' : 'text-white hover:bg-white/10'}`}
+              >
+                Conduct a Call
+              </button>
+              <button
+                onClick={() => setMode('watch')}
+                className={`px-4 py-2 rounded-md text-sm font-semibold transition-colors ${mode === 'watch' ? 'bg-white text-[#0051a5]' : 'text-white hover:bg-white/10'}`}
+              >
+                Watch a Call
+              </button>
+            </nav>
           </div>
         </div>
       </header>
@@ -552,6 +570,10 @@ function App() {
           </div>
         )}
 
+        {mode === 'watch' ? (
+          <WatchCall />
+        ) : (
+        <>
         {/* Script Configuration */}
         <div className="mb-6">
           <ScriptConfig
@@ -633,6 +655,8 @@ function App() {
             Note: This requires HTTPS in production. For local development, use <code className="bg-blue-100 px-1 rounded">vercel dev</code>.
           </p>
         </div>
+        </>
+        )}
       </main>
 
       {/* Footer */}

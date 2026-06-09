@@ -40,7 +40,7 @@ function readBody(req: IncomingMessage): Promise<any> {
   });
 }
 
-async function handleApi(name: string, req: IncomingMessage, res: ServerResponse) {
+async function handleApi(name: string, req: IncomingMessage, res: ServerResponse, query: Record<string, string>) {
   const handlerPath = resolve(process.cwd(), 'api', `${name}.ts`);
   if (!existsSync(handlerPath)) {
     res.writeHead(404).end(JSON.stringify({ error: `No api/${name}` }));
@@ -48,37 +48,22 @@ async function handleApi(name: string, req: IncomingMessage, res: ServerResponse
   }
   const mod = await import(handlerPath);
   const handler = mod.default;
-  const body = await readBody(req);
 
-  const mockReq = { method: req.method, body, headers: req.headers, query: {} } as any;
-  const mockRes = {
-    _status: 200,
-    status(code: number) {
-      this._status = code;
-      return this;
-    },
-    json(obj: any) {
-      res.writeHead(this._status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(obj));
-      return this;
-    },
-    send(obj: any) {
-      res.writeHead(this._status);
-      res.end(typeof obj === 'string' ? obj : JSON.stringify(obj));
-      return this;
-    },
-    setHeader(k: string, v: string) {
-      res.setHeader(k, v);
-      return this;
-    },
-    end() {
-      res.end();
-      return this;
-    },
-  } as any;
+  // Augment the REAL req/res with Vercel-style helpers. We pass the real objects
+  // through (not a mock) so streaming handlers (SSE) can res.write() over time and
+  // req.on('close') works.
+  const r = req as any;
+  r.query = query;
+  r.body = req.method && !['GET', 'HEAD'].includes(req.method) ? await readBody(req) : {};
+
+  const s = res as any;
+  let status = 200;
+  s.status = (code: number) => { status = code; return s; };
+  s.json = (obj: any) => { if (!res.headersSent) res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); return s; };
+  s.send = (obj: any) => { if (!res.headersSent) res.writeHead(status); res.end(typeof obj === 'string' ? obj : JSON.stringify(obj)); return s; };
 
   try {
-    await handler(mockReq, mockRes);
+    await handler(req, res);
   } catch (err) {
     if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: String(err) }));
@@ -102,7 +87,8 @@ export function startServer(port = 4321): Promise<{ url: string; close: () => Pr
   const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://localhost:${port}`);
     if (url.pathname.startsWith('/api/')) {
-      await handleApi(url.pathname.slice('/api/'.length), req, res);
+      const query = Object.fromEntries(url.searchParams.entries());
+      await handleApi(url.pathname.slice('/api/'.length), req, res, query);
     } else if (url.pathname.startsWith('/__clip/')) {
       // E2E patient audio clips injected as the fake mic (see runE2E.ts)
       const idx = url.pathname.slice('/__clip/'.length).replace(/\D/g, '');
