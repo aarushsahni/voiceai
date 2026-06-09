@@ -27,3 +27,9 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+
+# Test harness artifacts
+sim/e2e/patient.wav
+sim/e2e/clips/
+sim/realtime/clips/
+sim/e2e/last-run.log
